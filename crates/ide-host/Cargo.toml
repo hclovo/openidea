@@ -49,6 +49,9 @@ dunce.workspace = true
 dirs.workspace = true
 uuid.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "test-util"] }
 tempfile.workspace = true

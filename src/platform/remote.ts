@@ -108,6 +108,17 @@ export function disableRemote() {
   useRemote.setState({ session: null });
 }
 
+/** The window showed its server's settings: this machine's apply again (unless a project brought its own). */
+async function reloadLocalSettings() {
+  if (!isTauri()) return;
+  try {
+    const settings = await commands.settingsGet();
+    if (!useRemote.getState().session) useProject.setState((s) => (s.project && s.settings ? {} : { settings }));
+  } catch {
+    /* keep the settings shown */
+  }
+}
+
 export function isRemoteWindow(): boolean {
   return useRemote.getState().session !== null;
 }
@@ -118,6 +129,28 @@ export async function restoreRemote(): Promise<RemoteSession | null> {
   const session = await commands.remoteCurrent().catch(() => null);
   if (session) enableRemote(session);
   return session;
+}
+
+/**
+ * Runs remote work again once the user has done what its SSH connection lacked:
+ * trusted an unknown host key, typed a password or key passphrase.
+ */
+type SshRetry = <T>(sshConfig: string, run: () => Promise<T>) => Promise<T>;
+
+const runOnce: SshRetry = (_sshConfig, run) => run();
+let sshRetry: SshRetry = runOnce;
+
+/** Installs how a failed SSH connection asks the user for a remedy (a feature's prompts). */
+export function provideSshRetry(retry: SshRetry): () => void {
+  sshRetry = retry;
+  return () => {
+    if (sshRetry === retry) sshRetry = runOnce;
+  };
+}
+
+/** Runs `run`; when its connection to SSH configuration `sshConfig` fails, asks the user and retries. */
+export function withSshRetry<T>(sshConfig: string, run: () => Promise<T>): Promise<T> {
+  return sshRetry(sshConfig, run);
 }
 
 /** Where the connection in progress is, and to which location (`null`: none). */
@@ -136,7 +169,7 @@ export async function connectRemote(sshConfig: string, path: string) {
     location: remoteLocation(sshConfig, path),
   });
   try {
-    const r = await call(commands.remoteConnect(sshConfig, path, onProgress));
+    const r = await withSshRetry(sshConfig, () => call(commands.remoteConnect(sshConfig, path, onProgress)));
     enableRemote({ sshConfig: r.sshConfig, root: r.root, host: r.host, commands: r.commands });
     r.project.settings = await clientSettings(r.project.settings);
     useProject.setState({ project: r.project, settings: r.project.settings });
@@ -226,8 +259,11 @@ export function forgetRemote(sshConfig: string, path: string) {
   saveRemotes(recentRemotes().filter((r) => !sameRemote(r, { sshConfig, path })));
 }
 
-// Any way of leaving the remote project (Close Project, opening a local one) ends remote routing.
+// Any way of leaving the remote project (Close Project, opening a local one) ends remote routing;
+// back on the Welcome screen, the settings are this machine's again.
 useProject.subscribe((s) => {
   const session = useRemote.getState().session;
-  if (session && !s.opening && s.project?.root !== session.root) disableRemote();
+  if (!session || s.opening || s.project?.root === session.root) return;
+  disableRemote();
+  if (!s.project) void reloadLocalSettings();
 });

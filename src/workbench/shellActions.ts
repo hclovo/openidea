@@ -1,6 +1,7 @@
 import { executeAction, getAction, registerActions } from "@/platform/actions";
 import { isTauri } from "@/platform/ipc";
 import { closeProject, confirmLeaveProject, openProject, useProject } from "@/platform/project";
+import { isRemoteWindow } from "@/platform/remote";
 import { runSearchFieldCommand, showContextMenu } from "@/ui";
 import { showCustomizeToolbar } from "./MainToolbarDialog";
 import { quickSwitchItems } from "./quickSwitch";
@@ -11,7 +12,23 @@ import { toggleTheme } from "./theme";
 import { cancelTask, canCancel, useTasks } from "./tasks";
 import { maybeEditorService, showStatusInfo } from "./contributions";
 
+/** The remote-dev feature's folder chooser for the window's host. */
+const REMOTE_OPEN_FOLDER = "remote.openFolder";
+
+/**
+ * File › Open…: a folder of this machine, or in a remote window one of its host
+ * (Remote Development's folder chooser, with a way back to this machine's).
+ */
 export async function openProjectDialog() {
+  if (isRemoteWindow() && getAction(REMOTE_OPEN_FOLDER)) {
+    await executeAction(REMOTE_OPEN_FOLDER);
+    return;
+  }
+  await openLocalProjectDialog();
+}
+
+/** A folder of this machine, from the system's folder dialog. */
+export async function openLocalProjectDialog() {
   if (!isTauri()) {
     notify({
       level: "warning",

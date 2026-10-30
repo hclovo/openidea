@@ -5,6 +5,19 @@ import { confirm } from "@/workbench/messages";
 import { sshRemedy } from "./model";
 import { promptSecret } from "./store";
 
+/** Questions being asked per SSH configuration and remedy: work failing meanwhile waits for the same answer. */
+const asking = new Map<string, Promise<boolean>>();
+
+function askOnce(ssh: string, remedy: string, ask: () => Promise<boolean>): Promise<boolean> {
+  const key = `${remedy}:${ssh}`;
+  let answer = asking.get(key);
+  if (!answer) {
+    answer = ask().finally(() => asking.delete(key));
+    asking.set(key, answer);
+  }
+  return answer;
+}
+
 export async function withSsh<T>(ssh: string, run: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -14,18 +27,24 @@ export async function withSsh<T>(ssh: string, run: () => Promise<T>): Promise<T>
       const auth = workflowSettings().ssh.configs.find((c) => c.id === ssh)?.auth ?? "openSsh";
       const remedy = sshRemedy(e.kind, e.message, auth);
       if (remedy === "trustHostKey") {
-        const ok = await confirm({
-          title: "Unknown Host Key",
-          message: e.message,
-          ok: "Trust and Connect",
-          icon: "warning",
+        const trusted = await askOnce(ssh, remedy, async () => {
+          const ok = await confirm({
+            title: "Unknown Host Key",
+            message: e.message,
+            ok: "Trust and Connect",
+            icon: "warning",
+          });
+          if (ok) await call(commands.sshTrustHost(ssh));
+          return ok;
         });
-        if (!ok) throw e;
-        await call(commands.sshTrustHost(ssh));
+        if (!trusted) throw e;
       } else if (remedy === "secret") {
-        const answer = await promptSecret(ssh, e.message);
-        if (!answer) throw e;
-        await commands.sshSetSecret(ssh, answer.secret, answer.save);
+        const given = await askOnce(ssh, remedy, async () => {
+          const answer = await promptSecret(ssh, e.message);
+          if (answer) await commands.sshSetSecret(ssh, answer.secret, answer.save);
+          return !!answer;
+        });
+        if (!given) throw e;
       } else throw e;
     }
   }

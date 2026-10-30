@@ -72,3 +72,325 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+
+.grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 4px;
+}
+.fieldHint {
+  margin-top: -2px;
+  color: var(--fg-subtle);
+  font-size: var(--fs-small);
+}
+.muted {
+  color: var(--fg-subtle);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.link:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+/* Connect dialog: recent folders of the host, folder listing in progress */
+.recentRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.recentLabel {
+  color: var(--fg-subtle);
+  margin-right: 2px;
+}
+.recentChip {
+  max-width: 180px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+.recentChip:hover {
+  background: var(--bg-hover);
+}
+.listing {
+  display: flex;
+  padding: 3px 8px;
+}
+.noFolders {
+  padding: 3px 8px 3px 30px;
+  color: var(--fg-subtle);
+}
+
+/* Ports tool window */
+.ports {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.portsToolbar {
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+}
+.portsHint {
+  max-width: 420px;
+  margin: 0 0 8px;
+  text-align: center;
+  line-height: 1.5;
+}
+.portsScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.portsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-ui);
+}
+.portsTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-weight: normal;
+  font-size: var(--fs-small);
+  color: var(--fg-secondary);
+  padding: 0 10px;
+  height: 24px;
+  white-space: nowrap;
+}
+.portsTable td {
+  padding: 0 10px;
+  height: 24px;
+  white-space: nowrap;
+}
+.portsTable tbody tr:hover {
+  background: var(--bg-hover);
+}
+.portsTable tbody tr.selectedRow {
+  background: var(--bg-list-selected);
+}
+.portsTable tbody tr.sectionRow,
+.portsTable tbody tr.sectionRow:hover {
+  background: none;
+}
+.sectionRow td {
+  padding-top: 8px;
+  color: var(--fg-subtle);
+  font-size: var(--fs-small);
+}
+.detectedRow td:first-child {
+  color: var(--fg-secondary);
+}
+.portLabel {
+  margin-left: 8px;
+  color: var(--fg-subtle);
+  font-family: var(--font-ui);
+}
+.process {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.portError {
+  color: var(--warning);
+}
+.rowActions {
+  width: 1%;
+  text-align: right;
+}
+.rowActions > * {
+  vertical-align: middle;
+}
+
+/* Status bar widget */
+.hostButton {
+  gap: 5px;
+}
+.hostName {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hostMetrics {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+}
+.hostButton.low .hostMetrics {
+  color: var(--warning);
+}
+.hostButton.critical .hostMetrics,
+.hostButton.offline .hostMetrics {
+  color: var(--danger);
+}
+
+/* Host status popup */
+.panel {
+  width: 380px;
+  padding: 10px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  color: var(--fg);
+}
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panelHost {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-strong);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panelSub {
+  margin-top: -6px;
+  padding-left: 22px;
+  color: var(--fg-subtle);
+  font-size: var(--fs-small);
+}
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-small);
+  color: var(--fg-secondary);
+}
+.state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.stateOnline::before {
+  background: var(--success);
+}
+.stateOffline::before {
+  background: var(--danger);
+}
+.meters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.meter {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.meterLabel {
+  color: var(--fg-secondary);
+}
+.meterTrack {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-progress-track);
+  overflow: hidden;
+}
+.meterFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.meterFill.low {
+  background: var(--warning);
+}
+.meterFill.critical {
+  background: var(--danger);
+}
+.meterValue {
+  min-width: 112px;
+  text-align: right;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-emphasis);
+}
+.info {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-popup);
+  font-size: var(--fs-small);
+}
+.infoLabel {
+  color: var(--fg-subtle);
+}
+.infoValue {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panelSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-popup);
+}
+.panelSectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--fg-secondary);
+}
+.panelSectionHeader > span {
+  flex: 1;
+}
+.forwardList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.forwardRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+.forwardRow > :last-child {
+  margin-left: auto;
+}
+.panelActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-popup);
+}

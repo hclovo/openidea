@@ -908,6 +908,11 @@ export const commands = {
 	sshTrustHost: (id: string) => typedError<null, IdeError>(__TAURI_INVOKE("ssh_trust_host", { id })),
 	/**  Ids of the configurations with an open connection. */
 	sshConnected: () => __TAURI_INVOKE<string[]>("ssh_connected"),
+	/**
+	 *  The hosts of `~/.ssh/config` without a saved configuration, as configurations of their
+	 *  own (`ssh-config:<alias>`), for Remote Development and port forwarding.
+	 */
+	sshConfigHosts: () => typedError<SshConfigHost[], IdeError>(__TAURI_INVOKE("ssh_config_hosts")),
 	sshDisconnect: (id: string) => __TAURI_INVOKE<void>("ssh_disconnect", { id }),
 	/**  Answers an `IdeEvent::Askpass` prompt (`None`: cancelled); every window drops it. */
 	sshAskpassAnswer: (id: number, answer: string | null, remember: boolean) => __TAURI_INVOKE<void>("ssh_askpass_answer", { id, answer, remember }),
@@ -966,6 +971,17 @@ export const commands = {
 	 *  `on_channel` tagged with the id.
 	 */
 	remoteInvoke: (cmd: string, args: string, onChannel: Channel<ChannelFrame>) => typedError<string, IdeError>(__TAURI_INVOKE("remote_invoke", { cmd, args, onChannel })),
+	/**  CPU, memory, disk, load and uptime of the machine. */
+	machineStatus: () => typedError<MachineStatus, IdeError>(__TAURI_INVOKE("machine_status")),
+	/**  The TCP ports the user's processes listen on. */
+	machinePorts: () => typedError<ListeningPort[], IdeError>(__TAURI_INVOKE("machine_ports")),
+	/**  The ports this window forwards. */
+	portsList: () => __TAURI_INVOKE<PortForward[]>("ports_list"),
+	/**  Forwards a port of an SSH host to this machine (`ssh -L`), for this window. */
+	portsForward: (request: ForwardRequest) => typedError<PortForward, IdeError>(__TAURI_INVOKE("ports_forward", { request })),
+	portsStop: (id: number) => __TAURI_INVOKE<void>("ports_stop", { id }),
+	/**  Moves a forward to another local port (`None`: any free one). */
+	portsChangeLocal: (id: number, localPort: number | null) => typedError<PortForward, IdeError>(__TAURI_INVOKE("ports_change_local", { id, localPort })),
 	/**
 	 *  Reload Environment: new child processes get the login shell's current environment
 	 *  (and the project's `remoteEnv` on a remote host); running ones keep theirs.
@@ -3031,6 +3047,18 @@ export type FormatOptions = {
 	insertSpaces: boolean,
 };
 
+/**  What to forward. */
+export type ForwardRequest = {
+	sshConfig: string,
+	/**  The port as the SSH host reaches it. */
+	port: number,
+	/**  The host the SSH host connects to; empty: `localhost` (the SSH host itself). */
+	host?: string,
+	/**  The local port; `None`: the same as `port` when it is free, else any free one. */
+	localPort?: number | null,
+	label?: string,
+};
+
 /**  One occurrence of a duplicated code fragment. */
 export type Fragment = {
 	path: IpcPath,
@@ -3884,6 +3912,23 @@ export type LineMatch = {
 	textOffset: number,
 };
 
+/**  A TCP port a process of this user listens on. */
+export type ListeningPort = {
+	port: number,
+	/**  The address it is bound to (`127.0.0.1`, `0.0.0.0`, `::`…). */
+	address: string,
+	pid: number | null,
+	/**  Process name (`node`). */
+	process: string | null,
+	/**  Its command line, shortened. */
+	command: string | null,
+	/**
+	 *  Started from a run configuration or a terminal of this backend: an
+	 *  application the user is working on.
+	 */
+	fromIde: boolean,
+};
+
 /**  What a local definition declares (nvim-treesitter `@local.definition.<kind>`). */
 export type LocalKind = "var" | "parameter" | "function" | "type" | "import" | "macro" | "label" | 
 /**  Plain `@local.definition` or a kind without a better mapping. */
@@ -3999,6 +4044,34 @@ export type LogQuery = {
 };
 
 export type LspRefreshKind = "inlayHints" | "semanticTokens" | "codeLens";
+
+export type MachineStatus = {
+	hostname: string,
+	/**  Distribution or product with its version ("Ubuntu 24.04.1 LTS", "macOS 15.1"). */
+	os: string,
+	kernel: string,
+	arch: string,
+	cpus: number,
+	/**  Busy share of all CPUs since the previous reading (0..1); `None`: unknown. */
+	cpu: number | null,
+	/**  1, 5 and 15 minute load averages (empty: unknown). */
+	load: (number | null)[],
+	memoryTotal: number,
+	/**  Memory new processes get without swapping. */
+	memoryAvailable: number,
+	swapTotal: number,
+	swapFree: number,
+	/**  The folder whose file system `disk_*` describe: the project, else the home folder. */
+	diskPath: string,
+	diskTotal: number,
+	diskAvailable: number,
+	uptimeSecs: number,
+	/**
+	 *  Memory of this IDE backend and its helpers (language servers…), not of
+	 *  what runs and terminals started.
+	 */
+	backendMemory: number | null,
+};
 
 /**
  *  Main toolbar entries per side, in order: title widget ids (`project`,
@@ -4425,6 +4498,27 @@ export type PluginTheme = {
 export type PluginsSnapshot = {
 	plugins: PluginInfo[],
 	activeTheme: ActiveTheme | null,
+};
+
+/**  A forwarded port. */
+export type PortForward = {
+	id: number,
+	sshConfig: string,
+	/**  The host the SSH host connects to (`localhost`: itself). */
+	host: string,
+	port: number,
+	/**  Where it is reached on this machine: `localhost:<local_port>`. */
+	localPort: number,
+	label: string,
+	/**  Connections being forwarded right now. */
+	active: number,
+	/**  Connections forwarded so far. */
+	total: number,
+	/**
+	 *  Why the last connection could not reach the port (nothing listening…);
+	 *  cleared by the next one that does.
+	 */
+	error: string | null,
 };
 
 /**  A 0-based line / UTF-16 column position. */
@@ -5489,6 +5583,16 @@ export type SshAuth = "password" |
 "keyPair" | 
 /**  `~/.ssh/config` (HostName, User, Port, IdentityFile, ProxyJump) and the SSH agent. */
 "openSsh";
+
+/**  A `Host` of `~/.ssh/config`. */
+export type SshConfigHost = {
+	/**  The configuration connecting to it: the alias, with OpenSSH config and agent authentication. */
+	config: SshConfiguration,
+	/**  Where it leads: `user@hostname:port`. */
+	target: string,
+	/**  The `ProxyJump` hosts on the way, as written. */
+	proxyJump: string | null,
+};
 
 /**  A named SSH host, shared by terminals, deployment, run targets and data sources. */
 export type SshConfiguration = {

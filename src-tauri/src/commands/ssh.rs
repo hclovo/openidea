@@ -45,6 +45,17 @@ pub async fn ssh_trust_host(state: State<'_, AppState>, id: String) -> IdeResult
     ssh.trust_host(&id).await
 }
 
+/// The hosts of `~/.ssh/config` without a saved configuration, as configurations of their
+/// own (`ssh-config:<alias>`), for Remote Development and port forwarding.
+#[tauri::command]
+#[specta::specta]
+pub async fn ssh_config_hosts(state: State<'_, AppState>) -> IdeResult<Vec<ide_ssh::SshConfigHost>> {
+    let ssh = state.ssh.clone();
+    tauri::async_runtime::spawn_blocking(move || ssh.ssh_config_hosts())
+        .await
+        .map_err(|e| IdeError::internal(e.to_string()))
+}
+
 /// Ids of the configurations with an open connection.
 #[tauri::command]
 #[specta::specta]

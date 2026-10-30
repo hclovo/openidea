@@ -26,9 +26,11 @@ fn install_dir(version: &str) -> String {
 pub struct Connection {
     peer: Peer,
     pub ssh_config: String,
-    pub root: String,
+    /// The open folder; another folder of the same host reuses the connection.
+    root: Mutex<String>,
     pub host: String,
     pub commands: Vec<String>,
+    info: ServerInfo,
     /// Streaming arguments by connection-wide id: the frontend channel and the id
     /// it expects (each webview numbers its own, and a settings window shares this
     /// connection with its parent).
@@ -42,6 +44,17 @@ type Channels = Arc<Mutex<HashMap<u64, (Channel<ChannelFrame>, u64)>>>;
 #[derive(Default)]
 pub struct Connections(Mutex<HashMap<String, Arc<Connection>>>);
 
+impl Connection {
+    pub fn root(&self) -> String {
+        self.root.lock().clone()
+    }
+
+    /// The server still answers (its SSH channel is open).
+    fn is_alive(&self) -> bool {
+        !self.peer.is_closed()
+    }
+}
+
 impl Connections {
     pub fn get(&self, window: &str) -> Option<Arc<Connection>> {
         self.0.lock().get(window).cloned()
@@ -53,7 +66,7 @@ impl Connections {
         self.0
             .lock()
             .iter()
-            .find(|(_, c)| c.ssh_config == ssh_config && c.root.trim_end_matches('/') == root)
+            .find(|(_, c)| c.ssh_config == ssh_config && c.root().trim_end_matches('/') == root)
             .map(|(label, _)| label.clone())
     }
 
@@ -310,9 +323,17 @@ pub async fn remote_connect(
     });
     progress(RemoteStage::Connecting, None);
     let label = AppState::owner_window(window.label()).to_owned();
-    state.remote_dev.disconnect(&label);
-    state.host.close_project(&label);
     let config = state.ssh.config(&ssh_config)?;
+    match state.remote_dev.get(&label) {
+        // Another folder of the same host: the running server opens it.
+        Some(c) if c.ssh_config == ssh_config && c.is_alive() => {
+            return switch_folder(&window, &c, &config, &path, progress).await;
+        }
+        // Forwarded ports stay with their host.
+        Some(c) if c.ssh_config == ssh_config => state.remote_dev.disconnect(&label),
+        _ => state.leave_remote(&label),
+    }
+    state.host.close_project(&label);
     let session = state.ssh.session(&ssh_config).await?;
     let bin = ensure_server(&state, &session, progress.clone()).await?;
     progress(RemoteStage::Starting, None);
@@ -339,26 +360,16 @@ pub async fn remote_connect(
     }
     let commands: Vec<String> =
         peer.request("commands", Value::Null, None).await.map_err(ide_host::rpc::error_from_reply)?;
-    let root = if path.trim().is_empty() || path.trim() == "~" {
-        info.home.clone()
-    } else if let Some(rest) = path.trim().strip_prefix("~/") {
-        format!("{}/{rest}", info.home.trim_end_matches('/'))
-    } else {
-        path.trim().to_owned()
-    };
     progress(RemoteStage::Opening, None);
-    let call = Invoke { window: label.clone(), cmd: "open_project".into(), args: serde_json::json!({ "path": root }) };
-    let project: ide_host::ops::project::ProjectInfo =
-        peer.request("invoke", call, None).await.map_err(ide_host::rpc::error_from_reply)?;
-    // As the server resolved it (symlinks, a trailing `/`): the frontend compares it with the project's.
-    let root = serde_json::to_value(&project.root).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or(root);
+    let (project, root) = open_folder(&peer, &label, &info.home, &path).await?;
     let _ = window.set_title(&format!("{} [{}]", project.name, config.label()));
     let connection = Arc::new(Connection {
         peer,
         ssh_config: ssh_config.clone(),
-        root: root.clone(),
+        root: Mutex::new(root.clone()),
         host: config.label(),
         commands: commands.clone(),
+        info: info.clone(),
         channels,
         next_channel: std::sync::atomic::AtomicU64::new(1),
         _session: session,
@@ -371,6 +382,60 @@ pub async fn remote_connect(
         server_version: info.version,
         os: info.os,
         commands,
+        project,
+    })
+}
+
+/// `path` as the server takes it: `~` and `~/…` are the home folder.
+fn resolve_home(path: &str, home: &str) -> String {
+    let path = path.trim();
+    if path.is_empty() || path == "~" {
+        home.to_owned()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("{}/{rest}", home.trim_end_matches('/'))
+    } else {
+        path.to_owned()
+    }
+}
+
+/// Opens `path` in `window` on the server; returns the project and its root as
+/// the server resolved it (symlinks, a trailing `/`): the frontend compares it with the project's.
+async fn open_folder(
+    peer: &Peer,
+    window: &str,
+    home: &str,
+    path: &str,
+) -> IdeResult<(ide_host::ops::project::ProjectInfo, String)> {
+    let root = resolve_home(path, home);
+    let call =
+        Invoke { window: window.to_owned(), cmd: "open_project".into(), args: serde_json::json!({ "path": root }) };
+    let project: ide_host::ops::project::ProjectInfo =
+        peer.request("invoke", call, None).await.map_err(ide_host::rpc::error_from_reply)?;
+    let root = serde_json::to_value(&project.root).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or(root);
+    Ok((project, root))
+}
+
+/// Opens another folder of the connected host in this window, on its running
+/// server (which closes the previous project): no new connection or server.
+async fn switch_folder(
+    window: &Window,
+    c: &Connection,
+    config: &ide_core::remote_settings::SshConfiguration,
+    path: &str,
+    progress: Arc<Progress>,
+) -> IdeResult<RemoteProject> {
+    progress(RemoteStage::Opening, None);
+    let label = AppState::owner_window(window.label());
+    let (project, root) = open_folder(&c.peer, label, &c.info.home, path).await?;
+    *c.root.lock() = root.clone();
+    let _ = window.set_title(&format!("{} [{}]", project.name, config.label()));
+    Ok(RemoteProject {
+        ssh_config: c.ssh_config.clone(),
+        root,
+        host: c.host.clone(),
+        server_version: c.info.version.clone(),
+        os: c.info.os.clone(),
+        commands: c.commands.clone(),
         project,
     })
 }
@@ -391,7 +456,7 @@ pub fn remote_current(window: Window, state: State<'_, AppState>) -> Option<Remo
     let c = state.remote_dev.get(AppState::owner_window(window.label()))?;
     Some(RemoteSession {
         ssh_config: c.ssh_config.clone(),
-        root: c.root.clone(),
+        root: c.root(),
         host: c.host.clone(),
         commands: c.commands.clone(),
     })
@@ -400,7 +465,7 @@ pub fn remote_current(window: Window, state: State<'_, AppState>) -> Option<Remo
 #[tauri::command]
 #[specta::specta]
 pub fn remote_disconnect(window: Window, state: State<'_, AppState>) {
-    state.remote_dev.disconnect(AppState::owner_window(window.label()));
+    state.leave_remote(AppState::owner_window(window.label()));
 }
 
 /// Runs a command on the window's remote server; `args` and the result are JSON
@@ -438,6 +503,14 @@ pub async fn remote_invoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_the_home_folder() {
+        assert_eq!(resolve_home(" ~ ", "/home/me"), "/home/me");
+        assert_eq!(resolve_home("", "/home/me/"), "/home/me/");
+        assert_eq!(resolve_home("~/src/app", "/home/me/"), "/home/me/src/app");
+        assert_eq!(resolve_home("/srv/app ", "/home/me"), "/srv/app");
+    }
 
     #[test]
     fn maps_uname_to_rust_platform_names() {

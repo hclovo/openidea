@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import clsx from "clsx";
 import { executeAction, useActions } from "@/platform/actions";
 import { call, commands, isTauri, type OpenProject, type RecentProject } from "@/platform/ipc";
+import { useRemote } from "@/platform/remote";
 import { HighlightedText, Icon, Popup, showContextMenu, type IconName, T } from "@/ui";
 import type { ProjectPopupProps } from "@/workbench/contributions";
 import { askRemoveRecent, ProjectBadge, recentMenu } from "./RecentList";
@@ -13,10 +14,11 @@ type Entry =
   | { kind: "action"; id: string; label: string; icon: IconName }
   | { kind: "project"; open: boolean; m: RecentMatch };
 
-const ACTIONS: { id: string; label: string; icon: IconName }[] = [
+const ACTIONS: { id: string; label: string; icon: IconName; remoteOnly?: boolean }[] = [
   { id: "file.openProject", label: "Open…", icon: "folder" },
   { id: "vcs.clone", label: "Clone Repository…", icon: "branch" },
-  { id: "remote.connect", label: "Remote Development…", icon: "terminal" },
+  { id: "remote.connect", label: "Remote Development…", icon: "remote-host" },
+  { id: "remote.newWindow", label: "New Window on Remote Host…", icon: "remote-host", remoteOnly: true },
 ];
 
 function useOpenProjects(): OpenProject[] {
@@ -40,6 +42,7 @@ export function ProjectPopup({ anchor, onClose }: ProjectPopupProps) {
   const recent = useRecent((s) => s.projects);
   const home = useRecent((s) => s.home);
   const openProjects = useOpenProjects();
+  const remote = useRemote((s) => s.session !== null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -59,9 +62,16 @@ export function ProjectPopup({ anchor, onClose }: ProjectPopupProps) {
       query,
       home,
     ).map((m) => ({ kind: "project" as const, open: false, m }));
-    const acts = query ? [] : ACTIONS.filter((a) => actions.has(a.id)).map((a) => ({ kind: "action" as const, ...a }));
+    const acts = query
+      ? []
+      : ACTIONS.filter((a) => actions.has(a.id) && (remote || !a.remoteOnly)).map(({ id, label, icon }) => ({
+          kind: "action" as const,
+          id,
+          label,
+          icon,
+        }));
     return [...acts, ...open, ...rest];
-  }, [actions, recent, home, openProjects, query]);
+  }, [actions, recent, home, openProjects, query, remote]);
   const current = Math.min(active, entries.length - 1);
 
   useEffect(() => {
@@ -159,7 +169,7 @@ export function ProjectPopup({ anchor, onClose }: ProjectPopupProps) {
               {e.kind === "action" ? (
                 <>
                   <Icon name={e.icon} size={16} className={styles.actionIcon} />
-                  <span className={styles.label}>{e.label}</span>
+                  <span className={styles.label}>{tx(e.label)}</span>
                 </>
               ) : (
                 <ProjectRow m={e.m} active={i === current} />

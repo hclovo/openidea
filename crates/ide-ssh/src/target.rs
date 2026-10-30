@@ -68,10 +68,11 @@ fn local_user() -> String {
     std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_default()
 }
 
-/// One `~/.ssh/config` lookup (a missing or unreadable file means defaults).
+/// One `~/.ssh/config` lookup, includes followed (a missing or unreadable file means defaults).
 fn config_hop(config: Option<&Path>, alias: &str) -> (Hop, Option<String>) {
     let c = config
-        .and_then(|p| russh_config::parse_path(p, alias).ok())
+        .and_then(crate::ssh_config::read)
+        .and_then(|text| russh_config::parse(&text, alias).ok())
         .unwrap_or_else(|| russh_config::Config::default(alias));
     let identity_files = c.host_config.identity_file.clone().unwrap_or_default();
     let hop = Hop { host: c.host().to_owned(), port: c.port(), user: c.user(), identity_files };

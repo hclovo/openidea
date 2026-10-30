@@ -2,8 +2,8 @@
 //! reply) and forwards `direct-tcpip` channels to a local echo server.
 
 use ide_core::error::ErrorKind;
-use ide_core::remote_settings::SshAuth;
-use ide_ssh::{ConnectError, Output, Session, SshFiles, SshTarget, Tunnel};
+use ide_core::remote_settings::{SshAuth, SshConfiguration};
+use ide_ssh::{ConnectError, ForwardRequest, Output, PortForwards, Session, SshFiles, SshManager, SshTarget, Tunnel};
 use parking_lot::Mutex;
 use russh::keys::{PrivateKey, PublicKey, decode_secret_key};
 use russh::server::{self, Auth, ChannelOpenHandle, Msg, Server as _, Session as ServerSession};
@@ -253,4 +253,95 @@ async fn runs_commands_and_streams_processes() {
         .unwrap();
     assert_eq!(process.wait().await, Some(3));
     assert_eq!(*seen.lock(), ("ran: python3 main.py".to_owned(), "oops".to_owned()));
+}
+
+async fn echo_round_trip(port: u16) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    s.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    s.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"ping");
+}
+
+/// Waits until nothing accepts connections on local `port` any more.
+async fn closed(port: u16) -> bool {
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn forwards_ports_through_the_shared_session_of_a_configuration() {
+    let env = env().await;
+    let ssh = Arc::new(SshManager::with_files(env._tmp.path().join("ssh-passwords.json"), env.files.clone()));
+    ssh.set_configs(vec![SshConfiguration {
+        id: "box".into(),
+        name: "Box".into(),
+        host: "127.0.0.1".into(),
+        port: Some(env.ssh_port),
+        user: "dev".into(),
+        auth: SshAuth::Password,
+        ..Default::default()
+    }]);
+    ssh.set_secret("box", Some("secret".into()), false);
+    let ports = PortForwards::new(ssh.clone());
+    let request = ForwardRequest {
+        ssh_config: "box".into(),
+        port: env.echo_port,
+        host: "127.0.0.1".into(),
+        local_port: None,
+        label: " echo ".into(),
+    };
+
+    // An unknown host key fails before a local port is taken.
+    let e = ports.forward("main", request.clone()).await.unwrap_err();
+    assert!(e.message.starts_with("Unknown SSH host key"), "{}", e.message);
+    assert!(ports.list("main").is_empty());
+    ssh.trust_host("box").await.unwrap();
+
+    let f = ports.forward("main", request.clone()).await.unwrap();
+    assert_eq!((f.port, f.host.as_str(), f.label.as_str()), (env.echo_port, "127.0.0.1", "echo"));
+    echo_round_trip(f.local_port).await;
+    echo_round_trip(f.local_port).await;
+    assert_eq!(ports.list("main").iter().map(|p| (p.id, p.total)).collect::<Vec<_>>(), [(f.id, 2)]);
+    assert!(ports.list("other").is_empty(), "forwards belong to their window");
+
+    let e = ports.forward("main", request.clone()).await.unwrap_err();
+    assert_eq!(e.message, format!("Port {} is already forwarded to localhost:{}", env.echo_port, f.local_port));
+    let e = ports.forward("main", ForwardRequest { local_port: Some(f.local_port), port: 1, ..request.clone() });
+    assert_eq!(e.await.unwrap_err().message, format!("Local port {} is already in use", f.local_port));
+
+    // Another local port: the old one stops listening.
+    let moved = ports.change_local_port("main", f.id, None).await.unwrap();
+    assert_ne!(moved.local_port, f.local_port);
+    echo_round_trip(moved.local_port).await;
+    assert!(closed(f.local_port).await);
+
+    // The SSH host is this machine: a port forwarded to the same local port would loop.
+    let e =
+        ports.forward("main", ForwardRequest { local_port: Some(env.ssh_port), port: env.ssh_port, ..request.clone() });
+    let e = e.await.unwrap_err();
+    assert!(e.message.contains("would loop"), "{}", e.message);
+
+    // A port nothing listens on: the connection closes and the reason is kept.
+    let free = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    let g = ports.forward("main", ForwardRequest { port: free, ..request.clone() }).await.unwrap();
+    let mut s = TcpStream::connect(("127.0.0.1", g.local_port)).await.unwrap();
+    let mut buf = [0u8; 1];
+    assert_eq!(s.read(&mut buf).await.unwrap_or(0), 0);
+    let error = ports.list("main").into_iter().find(|p| p.id == g.id).and_then(|p| p.error).unwrap();
+    assert!(error.contains(&format!("cannot reach 127.0.0.1:{free}")), "{error}");
+
+    assert!(!ports.stop("other", g.id), "a window stops only its own forwards");
+    assert!(ports.stop("main", g.id));
+    assert!(closed(g.local_port).await);
+    ports.stop_config("main", "elsewhere");
+    assert_eq!(ports.list("main").len(), 1);
+    ports.stop_owner("main");
+    assert!(ports.list("main").is_empty());
+    assert!(closed(moved.local_port).await);
 }

@@ -164,6 +164,7 @@ const ICONS = {
   "toolwindow-changes": "toolwindows/changes",
   "toolwindow-database": "openidea/toolwindows/database",
   "toolwindow-agents": "openidea/toolwindows/agents",
+  "toolwindow-ports": "openidea/toolwindows/ports",
   // Coding agents (logos via Paseo)
   "agent-claude": "openidea/agents/claude",
   "agent-codex": "openidea/agents/codex",
@@ -295,6 +296,7 @@ const ICONS = {
   "db-yugabyte": "openidea/database/yugabyte",
   export: "openidea/general/export",
   web: "openidea/general/web",
+  "remote-host": "openidea/general/remoteHost",
   "browser-chrome": "openidea/browsers/chrome",
   "browser-chromium": "openidea/browsers/chromium",
   "browser-firefox": "openidea/browsers/firefox",

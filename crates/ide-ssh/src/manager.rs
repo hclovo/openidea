@@ -3,6 +3,7 @@
 
 use crate::secrets::SecretFile;
 use crate::session::{ConnectError, Session, UnknownHostKey};
+use crate::ssh_config::{self, SshConfigHost};
 use crate::target::{SshFiles, SshTarget};
 use ide_core::remote_settings::{SshAuth, SshConfiguration};
 use ide_core::{IdeError, IdeResult};
@@ -75,13 +76,26 @@ impl SshManager {
         self.configs.read().clone()
     }
 
+    /// Configuration `id`: a saved one, or a host of `~/.ssh/config` (`ssh-config:<alias>`).
     pub fn config(&self, id: &str) -> IdeResult<SshConfiguration> {
-        self.configs
-            .read()
-            .iter()
-            .find(|c| c.id == id)
-            .cloned()
-            .ok_or_else(|| IdeError::not_found(format!("no SSH configuration {id}")))
+        if let Some(c) = self.configs.read().iter().find(|c| c.id == id) {
+            return Ok(c.clone());
+        }
+        let alias = id.strip_prefix(ssh_config::ID_PREFIX);
+        let config = self.files.config.as_deref();
+        if let (Some(alias), Some(config)) = (alias, config)
+            && ssh_config::read(config).is_some_and(|text| ssh_config::aliases(&text).iter().any(|a| a == alias))
+        {
+            return Ok(ssh_config::configuration(alias));
+        }
+        Err(IdeError::not_found(format!("no SSH configuration {id}")))
+    }
+
+    /// The hosts of `~/.ssh/config` that no saved configuration connects to.
+    pub fn ssh_config_hosts(&self) -> Vec<SshConfigHost> {
+        let Some(config) = self.files.config.as_deref() else { return Vec::new() };
+        let saved: Vec<String> = self.configs.read().iter().map(|c| c.host.trim().to_ascii_lowercase()).collect();
+        ssh_config::hosts(config).into_iter().filter(|h| !saved.contains(&h.config.host.to_ascii_lowercase())).collect()
     }
 
     /// Remembers the password / passphrase of configuration `id` for the session,
@@ -188,5 +202,30 @@ impl SshManager {
     /// Whether connecting to `config` will need a secret the user has not given.
     pub fn needs_secret(&self, config: &SshConfiguration) -> bool {
         config.auth == SshAuth::Password && self.secret(config).is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosts_of_ssh_config_are_configurations_until_one_is_saved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        std::fs::write(&config, "Host dev4\n  HostName 10.0.0.4\nHost box\n  HostName 10.0.0.7\n").unwrap();
+        let files = SshFiles { known_hosts: tmp.path().join("known_hosts"), config: Some(config) };
+        let ssh = SshManager::with_files(tmp.path().join("ssh-passwords.json"), files);
+        let ids = |ssh: &SshManager| ssh.ssh_config_hosts().into_iter().map(|h| h.config.id).collect::<Vec<_>>();
+        assert_eq!(ids(&ssh), ["ssh-config:dev4", "ssh-config:box"]);
+        let c = ssh.config("ssh-config:box").unwrap();
+        assert_eq!((c.host.as_str(), c.auth), ("box", SshAuth::OpenSsh));
+        assert!(ssh.config("ssh-config:gone").is_err());
+
+        // A saved configuration for the host takes its place in the list; the old id still works.
+        ssh.set_configs(vec![SshConfiguration { id: "mine".into(), host: "box".into(), ..Default::default() }]);
+        assert_eq!(ids(&ssh), ["ssh-config:dev4"]);
+        assert!(ssh.config("ssh-config:box").is_ok());
+        assert_eq!(ssh.config("mine").unwrap().host, "box");
     }
 }

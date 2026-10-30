@@ -24,6 +24,8 @@ pub struct AppState {
     pub askpass: Option<ide_ssh::askpass::AskpassServer>,
     /// Remote development connections, by window label.
     pub remote_dev: crate::remote_dev::Connections,
+    /// Ports forwarded from SSH hosts, by window (the Ports tool window).
+    pub ports: ide_ssh::PortForwards,
     /// Broadcasts to every window.
     pub sink: SharedSink,
 }
@@ -95,6 +97,7 @@ impl AppState {
             plugins: crate::commands::plugin::create_host(&app, &data_dir)?,
             web: ide_web::WebServer::new(),
             remote_dev: crate::remote_dev::Connections::default(),
+            ports: ide_ssh::PortForwards::new(host.ssh.clone()),
             host,
             startup: Startup {
                 process_to_main,
@@ -127,10 +130,18 @@ impl AppState {
         crate::windows::settings_parent(window).unwrap_or(window)
     }
 
+    /// Ends `window`'s remote connection, with the ports it forwarded from that host.
+    pub fn leave_remote(&self, window: &str) {
+        if let Some(c) = self.remote_dev.get(window) {
+            self.ports.stop_config(window, &c.ssh_config);
+        }
+        self.remote_dev.disconnect(window);
+    }
+
     /// Opens `root` in `window` and records it in the recent projects.
     pub fn open_project(&self, window: &str, root: &Path) -> IdeResult<Arc<Project>> {
         // A local project replaces a remote one in this window.
-        self.remote_dev.disconnect(window);
+        self.leave_remote(window);
         let project = self.host.open_project(window, root)?;
         let branch = project.repos.read().primary().and_then(|r| r.branch_info().ok()).and_then(|b| b.head);
         self.recent.touch(&project.root, branch)?;
@@ -143,12 +154,14 @@ impl AppState {
 
     /// Opens `window` for editing the loose file `file` (LightEdit); not a recent project.
     pub fn open_light(&self, window: &str, file: &Path) -> IdeResult<Arc<Project>> {
-        self.remote_dev.disconnect(window);
+        self.leave_remote(window);
         self.host.open_light(window, file)
     }
 
+    /// Close Project, or the window closed: its forwarded ports stop too.
     pub fn close_project(&self, window: &str) {
         self.remote_dev.disconnect(window);
+        self.ports.stop_owner(window);
         self.host.close_project(window);
     }
 }

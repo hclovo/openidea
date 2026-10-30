@@ -1,7 +1,7 @@
 /** IntelliJ-style welcome window: brand + navigation on the left, the selected page on the right. */
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { executeAction } from "@/platform/actions";
+import { executeAction, useActions } from "@/platform/actions";
 import { useT, useTx, tx } from "@/platform/i18n";
 import { isTauri } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
@@ -13,11 +13,19 @@ import { ErrorBoundary, Slot } from "@/workbench/ErrorBoundary";
 import logo from "../../../src-tauri/icons/128x128.png";
 import { CustomizePage } from "./CustomizePage";
 import { ProjectsPage } from "./ProjectsPage";
+import { RemotePage } from "./RemotePage";
 import { loadRecent, useRecent } from "./recent";
 import { useSession } from "./session";
 import styles from "./Welcome.module.css";
 
-export type WelcomePage = "projects" | "customize" | "plugins";
+export type WelcomePage = "projects" | "remote" | "customize" | "plugins";
+
+const PAGE_LABELS: Record<WelcomePage, string> = {
+  projects: "Projects",
+  remote: "Remote Development",
+  customize: "Customize",
+  plugins: "Plugins",
+};
 
 /** Settings page id contributed by the plugins feature (embedded as Welcome › Plugins). */
 const PLUGINS_PAGE = "plugins";
@@ -72,6 +80,7 @@ function NavItem({
   page: WelcomePage;
   onSelect: (p: WelcomePage) => void;
 }) {
+  const tx = useTx();
   return (
     <button
       type="button"
@@ -79,7 +88,7 @@ function NavItem({
       aria-current={page === id ? "page" : undefined}
       onClick={() => onSelect(id)}
     >
-      {label}
+      {tx(label)}
     </button>
   );
 }
@@ -151,7 +160,8 @@ export function WelcomeView() {
   const Plugins = useSettingsPages((s) => s.pages.get(PLUGINS_PAGE)?.component);
   const [page, setPage] = useState<WelcomePage>("projects");
   const dropping = useFolderDrop();
-  const shown = page === "plugins" && !Plugins ? "projects" : page;
+  const canRemote = useActions((s) => s.actions.has("remote.connect"));
+  const shown = (page === "plugins" && !Plugins) || (page === "remote" && !canRemote) ? "projects" : page;
 
   useEffect(() => {
     void loadRecent();
@@ -175,6 +185,7 @@ export function WelcomeView() {
         <p className={styles.tagline}>{t("app.about.tagline")}</p>
         <nav className={styles.nav} aria-label={tx("Welcome")}>
           <NavItem id="projects" label="Projects" page={shown} onSelect={setPage} />
+          {canRemote && <NavItem id="remote" label="Remote Development" page={shown} onSelect={setPage} />}
           <NavItem id="customize" label="Customize" page={shown} onSelect={setPage} />
           {Plugins && <NavItem id="plugins" label="Plugins" page={shown} onSelect={setPage} />}
         </nav>
@@ -185,10 +196,11 @@ export function WelcomeView() {
       </aside>
       <section
         className={clsx(styles.content, shown === "plugins" && styles.contentPlugins)}
-        aria-label={shown === "projects" ? "Projects" : shown === "customize" ? "Customize" : "Plugins"}
+        aria-label={PAGE_LABELS[shown]}
         aria-busy={opening || undefined}
       >
         {shown === "projects" && <ProjectsPage />}
+        {shown === "remote" && <RemotePage />}
         {shown === "customize" && <CustomizePage />}
         {shown === "plugins" && Plugins && (
           <ErrorBoundary name="welcome plugins page">

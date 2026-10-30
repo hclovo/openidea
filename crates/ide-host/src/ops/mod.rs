@@ -14,6 +14,7 @@ pub mod fs;
 pub mod history;
 pub mod java;
 pub mod lsp;
+pub mod machine;
 pub mod nav;
 pub mod notebook;
 pub mod project;
@@ -80,6 +81,7 @@ pub fn register_all(d: &mut crate::rpc::Dispatcher) {
     search::register(d);
     run::register(d);
     env::register(d);
+    machine::register(d);
 }
 
 impl Host {

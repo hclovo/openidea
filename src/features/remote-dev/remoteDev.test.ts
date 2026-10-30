@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import type { RemoteEntry } from "@/platform/ipc";
+import type { MachineStatus, RemoteEntry } from "@/platform/ipc";
 import { forgetRemote, parseRemoteLocation, recentRemotes, rememberRemote, remoteLocation } from "@/platform/remote";
-import { browsableFolders, listedDirectory, remoteParent } from "./model";
+import {
+  browsableFolders,
+  formatLoad,
+  isOwnHost,
+  listedDirectory,
+  newAppPorts,
+  parsePort,
+  percent,
+  remoteAddress,
+  remoteBaseName,
+  remoteParent,
+  resourceLevel,
+  savedForwards,
+  usedShare,
+} from "./model";
 
 const entry = (path: string, isDir = true): RemoteEntry => ({
   name: path.slice(path.lastIndexOf("/") + 1),
@@ -55,5 +69,82 @@ describe("remote project locations", () => {
     expect(recentRemotes().map((r) => r.path)).toEqual(["/p", "/q"]);
     forgetRemote("a", "/p");
     expect(recentRemotes().map((r) => r.path)).toEqual(["/q"]);
+  });
+});
+
+describe("remote host status", () => {
+  const status = (patch: Partial<MachineStatus>): MachineStatus => ({
+    hostname: "box",
+    os: "Ubuntu 24.04.1 LTS",
+    kernel: "6.8.0",
+    arch: "x86_64",
+    cpus: 8,
+    cpu: 0.2,
+    load: [0.5, 0.4, 0.3],
+    memoryTotal: 16,
+    memoryAvailable: 8,
+    swapTotal: 0,
+    swapFree: 0,
+    diskPath: "/home/dev/app",
+    diskTotal: 100,
+    diskAvailable: 50,
+    uptimeSecs: 3600,
+    backendMemory: null,
+    ...patch,
+  });
+
+  it("measures the share in use", () => {
+    expect(usedShare(16, 4)).toBe(0.75);
+    expect(usedShare(0, 0)).toBeNull();
+    expect(percent(0.756)).toBe("76%");
+    expect(percent(null)).toBe("–");
+    expect(formatLoad([0.5, 1, 12.345])).toBe("0.50  1.00  12.35");
+    expect(formatLoad([])).toBe("–");
+  });
+
+  it("warns when memory, disk or CPU run short", () => {
+    expect(resourceLevel(status({}))).toBe("normal");
+    expect(resourceLevel(status({ cpu: 0.95 }))).toBe("low");
+    expect(resourceLevel(status({ memoryAvailable: 2 }))).toBe("low");
+    expect(resourceLevel(status({ diskAvailable: 4 }))).toBe("critical");
+    expect(resourceLevel(status({ memoryAvailable: 0.5 }))).toBe("critical");
+  });
+});
+
+describe("forwarded ports", () => {
+  it("reads ports typed in fields", () => {
+    expect(parsePort(" 8080 ")).toBe(8080);
+    expect(parsePort("0")).toBeNull();
+    expect(parsePort("65536")).toBeNull();
+    expect(parsePort("80a")).toBeNull();
+  });
+
+  it("names the host a port is reached on", () => {
+    expect(isOwnHost("")).toBe(true);
+    expect(isOwnHost("127.0.0.1")).toBe(true);
+    expect(isOwnHost("db.internal")).toBe(false);
+    expect(remoteAddress("localhost", 3000)).toBe("localhost:3000");
+    expect(remoteAddress(" db.internal ", 5432)).toBe("db.internal:5432");
+    expect(remoteBaseName("/home/dev/app/")).toBe("app");
+    expect(remoteBaseName("/")).toBe("/");
+  });
+
+  it("remembers the forwards through the window's own host", () => {
+    const f = (sshConfig: string, port: number) => ({
+      sshConfig,
+      port,
+      host: "localhost",
+      localPort: port + 1,
+      label: "",
+    });
+    expect(savedForwards([f("a", 3000), f("b", 5432)], "a")).toEqual([
+      { port: 3000, host: "localhost", localPort: 3001, label: "" },
+    ]);
+  });
+
+  it("offers new ports of applications started from the IDE, not yet forwarded", () => {
+    const p = (port: number, fromIde: boolean) => ({ port, fromIde });
+    const ports = [p(22, false), p(3000, true), p(5173, true), p(8888, true)];
+    expect(newAppPorts(ports, new Set([5173]), new Set([8888])).map((x) => x.port)).toEqual([3000]);
   });
 });

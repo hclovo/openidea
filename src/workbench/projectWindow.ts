@@ -47,16 +47,17 @@ export async function chooseProjectWindow(name: string): Promise<"new" | "same" 
 
 /**
  * Opens folder `path` on the host of SSH configuration `sshConfig`: focuses the
- * window that has it, else opens it in a new window or (`here`) this one per
- * "Open project in". `false`: cancelled.
+ * window that has it, else opens it in a new window or (`here`) this one, as
+ * `mode` says or else per "Open project in". `false`: cancelled.
  */
 export async function openRemoteProject(
   sshConfig: string,
   path: string,
   here: () => Promise<unknown> = () => connectRemote(sshConfig, path),
+  mode?: "new" | "same",
 ): Promise<boolean> {
   if ((await call(commands.windowOpenRemote(sshConfig, path, false))).kind === "focused") return true;
-  const mode = await chooseProjectWindow(path.replace(/\/+$/, "").split("/").pop() || path);
+  mode ??= (await chooseProjectWindow(path.replace(/\/+$/, "").split("/").pop() || path)) ?? undefined;
   if (!mode) return false;
   if (mode === "new") {
     await call(commands.windowOpenRemote(sshConfig, path, true));

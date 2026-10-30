@@ -218,6 +218,8 @@ pub fn spec(os: Os) -> Vec<Entry> {
         act("file.renameProject", "Rename Project…"),
         SEP,
         act("remote.connect", "Remote Development…"),
+        act("remote.openFolder", "Open Folder on Remote Host…"),
+        act("remote.newWindow", "New Window on Remote Host…"),
         act("remote.disconnect", "Disconnect from Remote Host"),
         act("remote.reloadEnvironment", "Reload Environment"),
         SEP,
@@ -702,6 +704,7 @@ pub fn spec(os: Os) -> Vec<Entry> {
             SEP,
             act("ssh.startSession", "Start SSH Session…"),
             act("ssh.configurations", "SSH Configurations…"),
+            act("remote.forwardPort", "Forward Port…"),
             sub(
                 "deployment",
                 "Deployment",

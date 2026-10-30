@@ -128,6 +128,15 @@ async fn serves_projects_files_documents_search_and_runs() {
         invoke(&peer, "vcs_add_to_ignore", json!({ "paths": [outside], "destination": "gitignore" })).await.is_err()
     );
 
+    // The host's status (Remote Development's status bar) and its listening ports.
+    let status = invoke(&peer, "machine_status", json!({})).await.unwrap();
+    assert!(status["memoryTotal"].as_u64().unwrap_or(0) > 0, "{status}");
+    assert!(status["cpus"].as_u64().unwrap_or(0) > 0, "{status}");
+    let canonical = dunce::canonicalize(&project).unwrap();
+    assert_eq!(status["diskPath"], canonical.to_string_lossy().as_ref(), "the project's file system");
+    let ports = invoke(&peer, "machine_ports", json!({})).await.unwrap();
+    assert!(ports.is_array(), "{ports}");
+
     // Unknown commands and bad arguments come back as IdeErrors.
     let e = invoke(&peer, "window_minimize", json!({})).await.unwrap_err();
     assert!(e.message.contains("not available remotely"), "{e:?}");

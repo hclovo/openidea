@@ -7,7 +7,7 @@
  * Open File…, a file path on the command line) open in LightEdit: a window with
  * editor tabs only. One LightEdit window collects them all.
  */
-import type { Action } from "@/platform/actions";
+import { executeAction, getAction, type Action } from "@/platform/actions";
 import { t } from "@/platform/i18n";
 import { call, commands, isTauri } from "@/platform/ipc";
 import {
@@ -205,6 +205,11 @@ export function windowActions(): Action[] {
       keywords: ["window", "project", "folder"],
       run: async (c) => {
         if (desktopOnly()) return;
+        // A remote window picks a folder of its host.
+        if (typeof c.arg !== "string" && isRemoteWindow() && getAction("remote.newWindow")) {
+          await executeAction("remote.newWindow");
+          return;
+        }
         const path = typeof c.arg === "string" ? c.arg : await pickFolder(t("app.window.pickTitle"));
         if (path) await openProjectInWindow(path, true);
       },
