@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import clsx from "clsx";
 import { useShallow } from "zustand/react/shallow";
-import type { AgentChange, AgentEntry, AgentRetry, AgentTask, AgentUsage } from "@/bindings";
+import type { AgentChange, AgentEntry, AgentImage, AgentRetry, AgentTask, AgentUsage } from "@/bindings";
 import { executeAction } from "@/platform/actions";
 import { call, commands, onIdeEvent } from "@/platform/ipc";
 import { basename, relativeDir, useProject } from "@/platform/project";
@@ -30,6 +30,7 @@ import { Composer } from "./Composer";
 import { canSend, emptyDraft, retryParts, usageLabel, workTime } from "./composerModel";
 import { ConfigPickers } from "./ConfigPickers";
 import { findRanges, formatDuration, formatSentAt } from "./conversation";
+import { ImagePreview, imageSrc } from "./ImagePreview";
 import { Markdown } from "./Markdown";
 import {
   branchLabel,
@@ -707,22 +708,27 @@ function UserMessage({
     return (
       <MessageEditor
         initial={entry.text}
+        initialImages={entry.images ?? []}
         later={turn < turnCount - 1}
         onCancel={() => setEditing(false)}
-        onSend={async (text) => {
-          await rerunFrom(task.id, turn, text);
+        onSend={async (text, images) => {
+          await rerunFrom(task.id, turn, text, images);
           setEditing(false);
         }}
       />
     );
   }
+  const images = entry.images ?? [];
+  // Images are listed after the files in `attachments` and shown as thumbnails instead.
+  const files = entry.attachments.slice(0, entry.attachments.length - images.length);
   return (
     <div className={styles.message}>
       <div className={styles.user}>
         {entry.text}
-        {entry.attachments.length > 0 && (
+        <ImageStrip images={images} />
+        {files.length > 0 && (
           <div className={styles.attachments}>
-            {entry.attachments.map((a, i) => (
+            {files.map((a, i) => (
               <span key={i} className={styles.attachment}>
                 <Icon name={fileIconName(a)} size={12} />
                 {a}
@@ -753,7 +759,9 @@ function UserMessage({
               title={inPlace ? "Run Again From Here" : "Send Again"}
               size="small"
               onClick={() =>
-                void (inPlace ? rerunFrom(task.id, turn, entry.text) : resendMessage(task.id, entry.text)).catch(fail)
+                void (
+                  inPlace ? rerunFrom(task.id, turn, entry.text, images) : resendMessage(task.id, entry.text)
+                ).catch(fail)
               }
             />
           )}
@@ -774,28 +782,31 @@ function UserMessage({
 /** An earlier message edited where it is: sending runs the conversation again from it. */
 function MessageEditor({
   initial,
+  initialImages,
   later,
   onCancel,
   onSend,
 }: {
   initial: string;
+  initialImages: AgentImage[];
   /** Turns follow it (they are dropped on send). */
   later: boolean;
   onCancel: () => void;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, images: AgentImage[]) => Promise<void>;
 }) {
   const tx = useTx();
   const [text, setText] = useState(initial);
+  const [images, setImages] = useState(initialImages);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
   const send = async () => {
-    if (!text.trim() || pending.current) return;
+    if ((!text.trim() && images.length === 0) || pending.current) return;
     pending.current = true;
     setSending(true);
     setError(null);
     try {
-      await onSend(text.trim());
+      await onSend(text.trim(), images);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       notifications().notify({ level: "error", title: "Couldn't send the message", body: String(e) });
@@ -827,6 +838,7 @@ function MessageEditor({
           }
         }}
       />
+      <ImageStrip images={images} onRemove={sending ? undefined : (i) => setImages(images.filter((_, j) => j !== i))} />
       {error && (
         <div className={styles.error} role="alert">
           <Icon name="error" size={14} />
@@ -845,12 +857,51 @@ function MessageEditor({
           <Button size="small" disabled={sending} onClick={onCancel}>
             Cancel
           </Button>
-          <Button size="small" variant="primary" disabled={!text.trim() || sending} onClick={() => void send()}>
+          <Button
+            size="small"
+            variant="primary"
+            disabled={(!text.trim() && images.length === 0) || sending}
+            onClick={() => void send()}
+          >
             {sending && <Spinner size={12} />}
             <T>Send</T>
           </Button>
         </span>
       </div>
+    </div>
+  );
+}
+
+/** Image thumbnails; a click opens the full image, `onRemove` adds a remove button to each. */
+function ImageStrip({ images, onRemove }: { images: AgentImage[]; onRemove?: (index: number) => void }) {
+  const tx = useTx();
+  const [open, setOpen] = useState<AgentImage | null>(null);
+  if (images.length === 0) return null;
+  return (
+    <div className={styles.images}>
+      {images.map((img, i) => (
+        <span key={i} className={styles.imageItem}>
+          <button
+            type="button"
+            className={styles.imageButton}
+            title={img.name ?? undefined}
+            onClick={() => setOpen(img)}
+          >
+            <img className={styles.image} src={imageSrc(img)} alt={img.name ?? tx("Image")} />
+          </button>
+          {onRemove && (
+            <button
+              type="button"
+              className={styles.removeImage}
+              aria-label={tx("Remove Image")}
+              onClick={() => onRemove(i)}
+            >
+              <Icon name="close" size={10} />
+            </button>
+          )}
+        </span>
+      ))}
+      <ImagePreview image={open} onClose={() => setOpen(null)} />
     </div>
   );
 }
