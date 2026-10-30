@@ -29,9 +29,17 @@ export const useHostStatus = create<HostStatusState>(() => ({ status: null, erro
 let reading: Promise<void> | null = null;
 let failures = 0;
 
+/**
+ * The window's server reads its machine. An older server lacks the command,
+ * which would then run here and describe this machine instead.
+ */
+export function servesHostStatus<S extends { commands: readonly string[] }>(session: S | null): session is S {
+  return !!session?.commands.includes("machine_status");
+}
+
 export function refreshHostStatus(): Promise<void> {
   const session = useRemote.getState().session;
-  if (!session) return Promise.resolve();
+  if (!servesHostStatus(session)) return Promise.resolve();
   reading ??= (async () => {
     try {
       const status = await call(commands.machineStatus());

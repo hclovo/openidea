@@ -12,7 +12,14 @@ import { useRemote } from "@/platform/remote";
 import { BarButton, Button, Icon, IconButton, Popup, T } from "@/ui";
 import { formatSize, formatUptime } from "@/features/perf/format";
 import { startPolling } from "@/features/perf/poll";
-import { DETAILS_INTERVAL_MS, STATUS_INTERVAL_MS, reconnect, refreshHostStatus, useHostStatus } from "./hostStatus";
+import {
+  DETAILS_INTERVAL_MS,
+  STATUS_INTERVAL_MS,
+  reconnect,
+  refreshHostStatus,
+  servesHostStatus,
+  useHostStatus,
+} from "./hostStatus";
 import { formatLoad, percent, remoteAddress, resourceLevel, usedShare } from "./model";
 import { openInBrowser, showForwardDialog, showPortsWindow, stopForwarding, usePorts } from "./ports";
 import styles from "./RemoteDev.module.css";
@@ -23,7 +30,7 @@ export const HOST_STATUS_WIDGET = { id: "remote.hostStatus", title: "Remote Host
 
 export function HostStatusWidget() {
   const session = useRemote((s) => s.session);
-  return session ? <HostStatusButton session={session} /> : null;
+  return session && servesHostStatus(session) ? <HostStatusButton session={session} /> : null;
 }
 
 function closePopup() {

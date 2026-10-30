@@ -59,7 +59,7 @@ const { useRemote, remoteLocation } = await import("@/platform/remote");
 const { checkListeningPorts, forwardPort, resetPortWatch, restoreForwards, savedFor, stopForwarding, usePorts } =
   await import("./ports");
 
-const session = { sshConfig: "box", root: "/home/dev/app", host: "dev@box", commands: [] };
+const session = { sshConfig: "box", root: "/home/dev/app", host: "dev@box", commands: ["machine_ports"] };
 const listening = (port: number, fromIde: boolean): ListeningPort => ({
   port,
   address: "127.0.0.1",
@@ -96,6 +96,15 @@ describe("ports of a remote window", () => {
     // "Forward Port" in the notification.
     notify.mock.calls[0]![0].actions[0].run();
     await vi.waitFor(() => expect(usePorts.getState().forwards.map((f) => f.port)).toEqual([3000]));
+  });
+
+  it("leaves an older server's host alone: its machine_ports would run on this machine", async () => {
+    useRemote.setState({ session: { ...session, commands: [] } });
+    backend.listening = [listening(3000, true)];
+    await checkListeningPorts();
+    await checkListeningPorts();
+    expect(usePorts.getState().listening).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("does not offer a port that is already forwarded", async () => {

@@ -236,7 +236,8 @@ export function resetPortWatch() {
 /** One look at the host's listening ports; offers new ones of applications started from the IDE. */
 export async function checkListeningPorts() {
   const session = useRemote.getState().session;
-  if (!session) return;
+  // An older server lacks the command, which would then list this machine's ports.
+  if (!session?.commands.includes("machine_ports")) return;
   const listening = await call(commands.machinePorts()).catch(() => null);
   if (!listening || useRemote.getState().session !== session) return;
   usePorts.setState({ listening });

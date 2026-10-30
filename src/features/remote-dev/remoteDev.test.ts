@@ -16,6 +16,7 @@ import {
   savedForwards,
   usedShare,
 } from "./model";
+import { servesHostStatus } from "./hostStatus";
 
 const entry = (path: string, isDir = true): RemoteEntry => ({
   name: path.slice(path.lastIndexOf("/") + 1),
@@ -108,6 +109,14 @@ describe("remote host status", () => {
     expect(resourceLevel(status({ memoryAvailable: 2 }))).toBe("low");
     expect(resourceLevel(status({ diskAvailable: 4 }))).toBe("critical");
     expect(resourceLevel(status({ memoryAvailable: 0.5 }))).toBe("critical");
+  });
+});
+
+describe("host status of older servers", () => {
+  it("is read only from a server that serves it", () => {
+    expect(servesHostStatus({ commands: ["fs_read_dir", "machine_status"] })).toBe(true);
+    expect(servesHostStatus({ commands: ["fs_read_dir"] })).toBe(false);
+    expect(servesHostStatus(null)).toBe(false);
   });
 });
 
