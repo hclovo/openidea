@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/l0ng-ai/openidea/releases/latest"><b>Download</b></a>
+  <a href="https://github.com/hclovo/openidea/releases/latest"><b>Download</b></a>
   &nbsp;·&nbsp;
   <a href="#benchmark">Benchmark</a>
   &nbsp;·&nbsp;
@@ -26,6 +26,23 @@ its search-everything habits — to a native app with a Rust core.
 
 Editor, code insight, debugger, Git, terminal, database and HTTP clients,
 for 60+ languages. Builds for macOS, Windows and Linux.
+
+## This fork
+
+[hclovo/openidea](https://github.com/hclovo/openidea) builds OpenIDEA from
+[l0ng-ai/openidea](https://github.com/l0ng-ai/openidea) with additions to remote
+development: port forwarding (the Ports tool window), the remote host's CPU, memory
+and disk in the status bar, opening more folders of a host in this or a new window,
+and the hosts of `~/.ssh/config` listed without setting them up. Its
+[releases](https://github.com/hclovo/openidea/releases/latest) ship the macOS and
+Linux apps and the `openidea-server` builds the app installs on remote hosts.
+
+The macOS app is not signed. After copying it to Applications, run this once before
+opening it:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/OpenIDEA.app
+```
 
 ## Benchmark
 

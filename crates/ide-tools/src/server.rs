@@ -7,7 +7,8 @@ use ide_core::CancellationToken;
 use ide_core::{IdeError, IdeResult};
 use std::path::{Path, PathBuf};
 
-const RELEASES: &str = "https://github.com/l0ng-ai/openidea/releases/download";
+/// This fork's releases: the app installs a server with its own features on remote hosts.
+const RELEASES: &str = "https://github.com/hclovo/openidea/releases/download";
 
 /// Host platforms with a published server (Rust's `OS`-`ARCH` names).
 pub const PLATFORMS: &[(&str, &str)] =
@@ -18,9 +19,16 @@ pub fn asset_name(os: &str, arch: &str) -> String {
     format!("openidea-server-{os}-{arch}.gz")
 }
 
-/// Where a downloaded server of `version` is kept.
+/// Where a downloaded server of `version` is kept: per release source, so a
+/// server of the same version from another repository (an app installed before
+/// from upstream's releases) is never taken for this build's.
 pub fn cached_path(app_data: &Path, version: &str, os: &str, arch: &str) -> PathBuf {
-    app_data.join("server").join(version).join(format!("{os}-{arch}")).join("openidea-server")
+    app_data.join("server").join(version).join(source()).join(format!("{os}-{arch}")).join("openidea-server")
+}
+
+/// `owner-repo` of the releases the servers come from (`hclovo-openidea`).
+fn source() -> String {
+    RELEASES.trim_start_matches("https://github.com/").split('/').take(2).collect::<Vec<_>>().join("-")
 }
 
 /// The server of `version` for `os`-`arch`: the cached download, or the release
@@ -93,7 +101,7 @@ mod tests {
     fn names_and_cache_layout() {
         assert_eq!(asset_name("linux", "x86_64"), "openidea-server-linux-x86_64.gz");
         let p = cached_path(Path::new("/data"), "1.2.3", "linux", "aarch64");
-        assert_eq!(p, Path::new("/data/server/1.2.3/linux-aarch64/openidea-server"));
+        assert_eq!(p, Path::new("/data/server/1.2.3/hclovo-openidea/linux-aarch64/openidea-server"));
     }
 
     #[test]
