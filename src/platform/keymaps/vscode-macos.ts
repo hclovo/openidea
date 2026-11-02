@@ -237,6 +237,7 @@ export const vscodeMacos: Record<string, string[]> = {
   "toolwindow.commit": [],
   "toolwindow.terminal": ["Ctrl+`"],
   "terminal.new": [],
+  "python.executeSelection": [],
   "toolwindow.hideAll": ["Meta+B"],
   "toolwindow.maximize": [],
   "toolwindow.jumpToLast": [],

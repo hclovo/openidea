@@ -834,6 +834,37 @@ fn py_config(
     c.debug("debugpy")
 }
 
+/// The `FastAPI()` object a module defines at top level (`app = FastAPI(...)`, annotations
+/// allowed), unless the module starts uvicorn itself.
+fn fastapi_app(text: &str) -> Option<String> {
+    if text.contains("uvicorn.run(") {
+        return None;
+    }
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once('=')?;
+        let name = name.split(':').next()?.trim_end();
+        let value = value.trim_start();
+        let ident = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        (ident
+            && !line.starts_with(char::is_whitespace)
+            && !value.starts_with('=')
+            && (value.starts_with("FastAPI(") || value.starts_with("fastapi.FastAPI(")))
+        .then(|| name.to_owned())
+    })
+}
+
+/// A top-level `app = Flask(__name__)` (annotations allowed).
+fn defines_flask_app(line: &str) -> bool {
+    let Some((name, value)) = line.split_once('=') else { return false };
+    let name = name.split(':').next().unwrap_or_default().trim_end();
+    let value = value.trim_start();
+    !line.starts_with(char::is_whitespace)
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && (value.starts_with("Flask(") || value.starts_with("flask.Flask("))
+}
+
 fn uses_pytest(root: &Path) -> bool {
     if ["pytest.ini", "tox.ini", "conftest.py"].iter().any(|f| root.join(f).is_file()) {
         return true;
@@ -861,10 +892,36 @@ fn detect_python(root: &Path, out: &mut Vec<RunConfig>) {
         out.push(py_config(
             "django:runserver".into(),
             "manage.py runserver".into(),
-            "python",
+            "django",
             env.python(),
             &["manage.py", "runserver"],
         ));
+    }
+    // FastAPI applications, served by uvicorn (PyCharm's FastAPI configuration).
+    for file in ["main.py", "app.py", "app/main.py", "api/main.py"] {
+        let Some(app) = read(&root.join(file)).as_deref().and_then(fastapi_app) else { continue };
+        let module = file.trim_end_matches(".py").replace('/', ".");
+        let target = format!("{module}:{app}");
+        out.push(py_config(
+            format!("fastapi:{target}"),
+            format!("FastAPI {target}"),
+            "fastapi",
+            env.python(),
+            &["-m", "uvicorn", &target, "--reload"],
+        ));
+    }
+    // Flask applications (PyCharm's Flask Server), unless the module starts the server itself.
+    for file in ["app.py", "wsgi.py"] {
+        let Some(text) = read(&root.join(file)) else { continue };
+        if !text.contains(".run(") && text.lines().any(defines_flask_app) {
+            out.push(py_config(
+                format!("flask:{file}"),
+                format!("Flask {file}"),
+                "flask",
+                env.python(),
+                &["-m", "flask", "--app", file, "run", "--debug"],
+            ));
+        }
     }
     let mut modules = Vec::new();
     for base in [root.to_path_buf(), root.join("src")] {

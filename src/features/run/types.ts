@@ -5,7 +5,12 @@
  */
 import { isJvmApplication, parseJavaArgs } from "@/platform/javaLaunch";
 import type { RunConfig } from "@/platform/ipc";
-import { registerRunConfigType, useRunConfigTypes, type RunConfigTypeContribution } from "@/workbench/contributions";
+import {
+  registerRunConfigType,
+  useRunConfigTypes,
+  type RunConfigTypeContribution,
+  type RunConfigTypeField,
+} from "@/workbench/contributions";
 import { formatArgs, parseArgs, uid, uniqueName } from "./configs";
 import { commandName } from "./commandName";
 import {
@@ -19,6 +24,7 @@ import {
 import { tx } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
 import { isRemoteWindow } from "@/platform/remote";
+import { appModule } from "./fastapi";
 import { pythonInterpreters } from "./pythonInterpreters";
 
 import { tomcatType } from "./tomcat";
@@ -404,14 +410,22 @@ const windowsHost = () => isWindows() && !isRemoteWindow();
 const splitPython = (text: string | undefined) => parseArgs(text ?? "", windowsHost());
 
 /** The form of a Python command line; null when it runs no script or module (`-c` code, stdin, the REPL). */
-function pythonParams(c: RunConfig): Record<string, string> | null {
-  if (c.kind !== "python") return null;
+/** The interpreter (with a runner's `run python`) of a Python command line, and the arguments after it. */
+function splitInterpreter(c: RunConfig): { interpreter: string; args: string[] } | null {
   const args = [...c.args];
   const interpreter = [c.command];
   if (PYTHON_RUNNERS.has(commandName(c.command)) && args[0] === "run") {
     interpreter.push(args.shift()!);
     if (args[0] && isPythonCommand(args[0])) interpreter.push(args.shift()!);
   } else if (!isInterpreter(c.command)) return null;
+  return { interpreter: formatArgs(interpreter), args };
+}
+
+function pythonParams(c: RunConfig): Record<string, string> | null {
+  if (c.kind !== "python") return null;
+  const split = splitInterpreter(c);
+  if (!split) return null;
+  const { interpreter, args } = split;
   const options: string[] = [];
   while (args[0]?.startsWith("-") && args[0] !== "-m") {
     const option = args.shift()!;
@@ -424,13 +438,36 @@ function pythonParams(c: RunConfig): Record<string, string> | null {
   const target = args.shift();
   if (!target) return null;
   return {
-    interpreter: formatArgs(interpreter),
+    interpreter,
     mode: module ? "module" : "script",
     ...(module ? { module: target } : { script: target }),
     parameters: formatArgs(args),
     options: formatArgs(options),
   };
 }
+
+/** The interpreter of a Python or FastAPI configuration: empty runs the project interpreter. */
+const interpreterField: RunConfigTypeField = {
+  key: "interpreter",
+  label: "Python interpreter",
+  mono: true,
+  placeholder: "Project interpreter",
+  hint: "Empty uses the project interpreter; e.g. .venv/bin/python or uv run python",
+  suggestions: (configs) => [
+    ...new Set([
+      ...pythonInterpreters(),
+      ...configs.flatMap((c) =>
+        c.kind === "python" || c.kind === "fastapi" ? (splitInterpreter(c)?.interpreter ?? []) : [],
+      ),
+    ]),
+  ],
+};
+
+/** A command line's interpreter: the one typed, else `python3` (`python` on Windows) for the project's. */
+const interpreterLine = (interpreter: string | undefined) => {
+  const [command = windowsHost() ? "python" : "python3", ...runner] = splitPython(interpreter);
+  return { command, runner };
+};
 
 /**
  * Python (PyCharm's Python configuration): a script, or a module run with `-m`.
@@ -447,16 +484,7 @@ const python: RunConfigTypeContribution = {
   defaults: { mode: "script" },
   debugAdapter: "debugpy",
   fields: [
-    {
-      key: "interpreter",
-      label: "Python interpreter",
-      mono: true,
-      placeholder: "Project interpreter",
-      hint: "Empty uses the project interpreter; e.g. .venv/bin/python or uv run python",
-      suggestions: (configs) => [
-        ...new Set([...pythonInterpreters(), ...configs.flatMap((c) => pythonParams(c)?.interpreter ?? [])]),
-      ],
-    },
+    interpreterField,
     {
       key: "mode",
       label: "Execute",
@@ -488,11 +516,178 @@ const python: RunConfigTypeContribution = {
     { key: "options", label: "Interpreter options", mono: true, placeholder: "e.g. -X dev -W error" },
   ],
   commandLine(p) {
-    const [command = windowsHost() ? "python" : "python3", ...runner] = splitPython(p.interpreter);
+    const { command, runner } = interpreterLine(p.interpreter);
     const target = p.mode === "module" ? ["-m", p.module?.trim() ?? ""] : [p.script?.trim() ?? ""];
     return { command, args: [...runner, ...splitPython(p.options), ...target, ...splitPython(p.parameters)] };
   },
   paramsFrom: pythonParams,
+};
+
+const IDENTIFIER = /^[A-Za-z_]\w*$/;
+
+/**
+ * FastAPI (PyCharm's FastAPI configuration): uvicorn serving the application object of an
+ * application file, `python -m uvicorn app.main:app --reload`, with the project interpreter
+ * unless one is chosen. Debugging runs uvicorn under debugpy.
+ */
+const fastapi: RunConfigTypeContribution = {
+  id: "fastapi",
+  label: "FastAPI",
+  icon: "file-python",
+  description: "Serve a FastAPI application with uvicorn",
+  defaults: { app: "app", options: "--reload" },
+  debugAdapter: "debugpy",
+  fields: [
+    interpreterField,
+    {
+      key: "file",
+      label: "Application file",
+      mono: true,
+      required: true,
+      placeholder: "main.py",
+      hint: "Relative to the working directory",
+      validate: (v) => (/^[^\s/\\][^\s]*\.py$/.test(v.trim()) ? null : "A .py file relative to the working directory"),
+    },
+    {
+      key: "app",
+      label: "Application name",
+      mono: true,
+      required: true,
+      placeholder: "app",
+      hint: "The FastAPI() object in that file",
+      validate: (v) => (IDENTIFIER.test(v.trim()) ? null : "Not a Python name"),
+    },
+    { key: "options", label: "Uvicorn options", mono: true, placeholder: "e.g. --reload --port 8000" },
+  ],
+  commandLine(p) {
+    const { command, runner } = interpreterLine(p.interpreter);
+    const target = `${appModule(p.file ?? "")}:${p.app?.trim() || "app"}`;
+    return { command, args: [...runner, "-m", "uvicorn", target, ...splitPython(p.options)] };
+  },
+  paramsFrom(c) {
+    if (c.kind !== "fastapi") return null;
+    const split = splitInterpreter(c);
+    if (!split) return null;
+    const [m, uvicorn, target, ...options] = split.args;
+    const [module, app] = target?.split(":") ?? [];
+    if (m !== "-m" || uvicorn !== "uvicorn" || !module || !app || !IDENTIFIER.test(app)) return null;
+    return {
+      interpreter: split.interpreter,
+      file: `${module.split(".").join("/")}.py`,
+      app,
+      options: formatArgs(options),
+    };
+  },
+};
+
+/** `--opt` once among `options`, and the options without it. */
+function takeFlag(options: string[], flag: string): [boolean, string[]] {
+  const i = options.indexOf(flag);
+  return i < 0 ? [false, options] : [true, [...options.slice(0, i), ...options.slice(i + 1)]];
+}
+
+/**
+ * Flask (PyCharm's Flask Server): `python -m flask --app app.py run --debug` with the project
+ * interpreter unless one is chosen; the app is a file or `package.module:create_app()`.
+ */
+const flask: RunConfigTypeContribution = {
+  id: "flask",
+  label: "Flask",
+  icon: "file-python",
+  description: "Serve a Flask application",
+  defaults: { app: "app.py", debug: "true" },
+  debugAdapter: "debugpy",
+  fields: [
+    interpreterField,
+    {
+      key: "app",
+      label: "Application",
+      mono: true,
+      required: true,
+      placeholder: "app.py",
+      hint: "A file or module, optionally with the app: e.g. app.py or package.app:create_app()",
+    },
+    {
+      key: "debug",
+      label: "Debug mode",
+      control: "checkbox",
+      hint: "Reloads on changes and shows the debugger page on errors",
+    },
+    { key: "options", label: "Additional options", mono: true, placeholder: "e.g. --port 5000 --host 0.0.0.0" },
+  ],
+  commandLine(p) {
+    const { command, runner } = interpreterLine(p.interpreter);
+    const debug = p.debug === "true" ? ["--debug"] : [];
+    return {
+      command,
+      args: [...runner, "-m", "flask", "--app", p.app?.trim() ?? "", "run", ...debug, ...splitPython(p.options)],
+    };
+  },
+  paramsFrom(c) {
+    if (c.kind !== "flask") return null;
+    const split = splitInterpreter(c);
+    if (!split) return null;
+    const [m, flask, appFlag, app, run, ...rest] = split.args;
+    if (m !== "-m" || flask !== "flask" || appFlag !== "--app" || !app || run !== "run") return null;
+    const [debug, options] = takeFlag(rest, "--debug");
+    // Only a leading --debug reads back the same.
+    if (debug && rest[0] !== "--debug") return null;
+    return { interpreter: split.interpreter, app, debug: debug ? "true" : "", options: formatArgs(options) };
+  },
+};
+
+/** `runserver`'s address argument: `8000`, `0.0.0.0:8000`, `[::]:8000`. */
+const ADDRESS = /^(?:(.+):)?(\d+)$/;
+
+/**
+ * Django Server (PyCharm's): `python manage.py runserver host:port` with the project
+ * interpreter unless one is chosen.
+ */
+const django: RunConfigTypeContribution = {
+  id: "django",
+  label: "Django Server",
+  icon: "file-python",
+  description: "Run a Django project's development server",
+  defaults: { manage: "manage.py" },
+  debugAdapter: "debugpy",
+  fields: [
+    interpreterField,
+    { key: "manage", label: "manage.py", mono: true, required: true, placeholder: "manage.py" },
+    { key: "host", label: "Host", mono: true, placeholder: "127.0.0.1" },
+    {
+      key: "port",
+      label: "Port",
+      mono: true,
+      placeholder: "8000",
+      validate: (v) => (/^\d+$/.test(v.trim()) ? null : "Port must be a number"),
+    },
+    { key: "options", label: "Additional options", mono: true, placeholder: "e.g. --noreload" },
+  ],
+  commandLine(p) {
+    const { command, runner } = interpreterLine(p.interpreter);
+    const host = p.host?.trim() ?? "";
+    const port = p.port?.trim() || (host ? "8000" : "");
+    const address = host ? [`${host}:${port}`] : port ? [port] : [];
+    return {
+      command,
+      args: [...runner, p.manage?.trim() || "manage.py", "runserver", ...address, ...splitPython(p.options)],
+    };
+  },
+  paramsFrom(c) {
+    if (c.kind !== "django") return null;
+    const split = splitInterpreter(c);
+    if (!split) return null;
+    const [manage, runserver, ...rest] = split.args;
+    if (!manage?.endsWith("manage.py") || runserver !== "runserver") return null;
+    const address = rest[0] ? ADDRESS.exec(rest[0]) : null;
+    return {
+      interpreter: split.interpreter,
+      manage,
+      host: address?.[1] ?? "",
+      port: address ? address[2]! : "",
+      options: formatArgs(address ? rest.slice(1) : rest),
+    };
+  },
 };
 
 export const BUILTIN_TYPES: readonly RunConfigTypeContribution[] = [
@@ -503,6 +698,9 @@ export const BUILTIN_TYPES: readonly RunConfigTypeContribution[] = [
   maven,
   godot,
   python,
+  fastapi,
+  flask,
+  django,
   pytest,
   dotnetProjectType,
   dotnetTestType,

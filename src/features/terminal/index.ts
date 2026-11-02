@@ -6,10 +6,16 @@ import { registerActions } from "@/platform/actions";
 import { onIdeEvent } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import { onWorkflowSettingsChange } from "@/platform/workflowSettings";
-import { provideEmbeddedTerminal, registerToolWindow, toolWindowService } from "@/workbench/contributions";
+import {
+  provideEmbeddedTerminal,
+  registerMenuGroup,
+  registerToolWindow,
+  toolWindowService,
+} from "@/workbench/contributions";
 import { lazyComponent } from "@/ui";
 import { installTerminalKeys } from "./keys";
 import { loadTerminalRuntime, terminalRuntime } from "./loader";
+import { executeSelectionInConsole, openPythonConsole } from "./pythonConsole";
 
 const WINDOW = "terminal";
 
@@ -53,7 +59,32 @@ export function activate(): () => void {
       component: lazyComponent(() => loadTerminalRuntime().then((rt) => rt.TerminalView)),
       headerContent: lazyComponent(() => loadTerminalRuntime().then((rt) => rt.TerminalTabs)),
     }),
+    registerMenuGroup({
+      id: "python.console",
+      menus: ["editor"],
+      items: (_menu, ctx) =>
+        ctx.paths[0]?.endsWith(".py") ? [{ kind: "action", action: "python.executeSelection" }] : [],
+    }),
     registerActions([
+      {
+        id: "python.console",
+        title: "Python Console",
+        description: "An interactive interpreter of the project, at the project root (PyCharm's Python Console).",
+        category: "Python",
+        icon: "file-python",
+        when: "projectOpen",
+        keywords: ["repl", "interactive", "shell", "interpreter"],
+        run: () => void openPythonConsole(),
+      },
+      {
+        id: "python.executeSelection",
+        title: "Execute Selection in Python Console",
+        category: "Python",
+        icon: "file-python",
+        when: "editorLangId == python",
+        keywords: ["repl", "send", "run selection"],
+        run: () => void executeSelectionInConsole(),
+      },
       {
         id: "terminal.new",
         title: "New Terminal Tab",

@@ -19,6 +19,7 @@ import { buildRows } from "./ConfigChooser";
 import { ConfigForm, memberRows } from "./ConfigForm";
 import { compoundChildren, compoundCycle, formatEnv, parseEnv, validateConfig } from "./configs";
 import { contextConfig } from "./context";
+import { appModule, fastApiApp, isFlaskApp } from "./fastapi";
 import { EditConfigsOverlay, moveConfig, treeRows } from "./EditConfigsDialog";
 import { pasteRows } from "./EnvDialog";
 import { CURRENT_FILE, resetRuns, selectConfig, sessionsOf, startCompound, startRun, useRun } from "./store";
@@ -337,6 +338,84 @@ describe("configuration types", () => {
     expect(missingParams(withParams(fresh, { mode: "module", module: "1app" }))).toEqual({
       module: "Not a module name",
     });
+  });
+
+  it("FastAPI serves an application file with uvicorn, and running such a file makes one", () => {
+    const fastapi = typeFor("fastapi")!;
+    const fresh = newConfigOfType(fastapi, []);
+    expect(fresh).toMatchObject({
+      kind: "fastapi",
+      debugAdapter: "debugpy",
+      params: { app: "app", options: "--reload" },
+    });
+    expect(missingParams(fresh)).toEqual({ file: "Application file is required" });
+    const params = {
+      interpreter: ".venv/bin/python",
+      file: "app/main.py",
+      app: "api",
+      options: "--reload --port 8001",
+    };
+    const line = { command: ".venv/bin/python", args: ["-m", "uvicorn", "app.main:api", "--reload", "--port", "8001"] };
+    expect(fastapi.commandLine(params)).toEqual(line);
+    expect(formParams(cfg("f", { kind: "fastapi", ...line, detected: true }))).toEqual(params);
+    expect(fastapi.commandLine({ file: "main.py", app: "app" })).toEqual({
+      command: "python3",
+      args: ["-m", "uvicorn", "main:app"],
+    });
+    expect(formParams(cfg("f", { kind: "fastapi", command: "python3", args: ["-m", "flask", "run"] }))).toBeNull();
+    expect(missingParams(withParams(fresh, { file: "/abs/main.py", app: "1x" }))).toEqual({
+      file: "A .py file relative to the working directory",
+      app: "Not a Python name",
+    });
+
+    expect(appModule("./api/main.py")).toBe("api.main");
+    expect(fastApiApp("from fastapi import FastAPI\n\napp = FastAPI()\n")).toBe("app");
+    expect(fastApiApp("api: FastAPI = fastapi.FastAPI(title='x')\n")).toBe("api");
+    expect(fastApiApp("app = FastAPI()\nuvicorn.run(app)\n")).toBeNull();
+    expect(fastApiApp("def f():\n    app = FastAPI()\n")).toBeNull();
+  });
+
+  it("Flask and Django Server read their command lines back into their forms", () => {
+    const flask = typeFor("flask")!;
+    expect(newConfigOfType(flask, [])).toMatchObject({
+      kind: "flask",
+      command: "python3",
+      args: ["-m", "flask", "--app", "app.py", "run", "--debug"],
+    });
+    const flaskLine = {
+      command: "uv",
+      args: ["run", "python", "-m", "flask", "--app", "web:create_app()", "run", "--port", "5001"],
+    };
+    const flaskParams = { interpreter: "uv run python", app: "web:create_app()", debug: "", options: "--port 5001" };
+    expect(formParams(cfg("f", { kind: "flask", ...flaskLine, detected: true }))).toEqual(flaskParams);
+    expect(flask.commandLine(flaskParams)).toEqual(flaskLine);
+
+    const django = typeFor("django")!;
+    const cases: Array<[string[], Record<string, string>]> = [
+      [["manage.py", "runserver"], { manage: "manage.py", host: "", port: "", options: "" }],
+      [["manage.py", "runserver", "8001"], { manage: "manage.py", host: "", port: "8001", options: "" }],
+      [
+        ["src/manage.py", "runserver", "0.0.0.0:8000", "--noreload"],
+        { manage: "src/manage.py", host: "0.0.0.0", port: "8000", options: "--noreload" },
+      ],
+    ];
+    for (const [args, form] of cases) {
+      const c = cfg("d", { kind: "django", command: ".venv/bin/python", args, detected: true });
+      const params = { interpreter: ".venv/bin/python", ...form };
+      expect(formParams(c)).toEqual(params);
+      expect(django.commandLine(params)).toEqual({ command: ".venv/bin/python", args });
+    }
+    expect(django.commandLine({ manage: "manage.py", host: "0.0.0.0" })!.args).toEqual([
+      "manage.py",
+      "runserver",
+      "0.0.0.0:8000",
+    ]);
+    expect(missingParams(withParams(newConfigOfType(django, []), { manage: "manage.py", port: "web" }))).toEqual({
+      port: "Port must be a number",
+    });
+
+    expect(isFlaskApp("from flask import Flask\napp = Flask(__name__)\n")).toBe(true);
+    expect(isFlaskApp("app = Flask(__name__)\napp.run(debug=True)\n")).toBe(false);
   });
 
   it("a new Python configuration takes a script, parameters and environment variables", async () => {

@@ -615,7 +615,9 @@ pub fn venv_activation(root: &Path, s: &Settings) -> BTreeMap<String, String> {
 /// coverage or a profiler) gets the project's virtualenv, as the terminal does, unless its
 /// environment names one.
 pub fn activate_venv(config: &mut RunConfig, root: &Path, s: &Settings) {
-    if matches!(config.kind.as_str(), "python" | "pytest" | "external") && !config.env.contains_key("VIRTUAL_ENV") {
+    if matches!(config.kind.as_str(), "python" | "pytest" | "fastapi" | "flask" | "django" | "external")
+        && !config.env.contains_key("VIRTUAL_ENV")
+    {
         for (key, value) in venv_activation(root, s) {
             config.env.entry(key).or_insert(value);
         }
@@ -641,10 +643,10 @@ pub fn apply_to_run_configs(configs: &mut [RunConfig], root: &Path, s: &Settings
         resolve_run_command(c, root, s);
         let mut path_dirs: Vec<PathBuf> = Vec::new();
         match c.kind.as_str() {
-            "python" | "pytest" => {
+            "python" | "pytest" | "fastapi" | "flask" | "django" => {
                 if let Some(py) = &explicit_python {
                     let runner = PY_RUNNERS.contains(&c.command.as_str());
-                    if c.kind == "python" && (runner || is_python_command(&c.command)) {
+                    if c.kind != "pytest" && (runner || is_python_command(&c.command)) {
                         if runner && c.args.first().map(String::as_str) == Some("run") {
                             // `uv run python …` → `<interpreter> …`
                             let skip = if c.args.get(1).is_some_and(|a| is_python_command(a)) { 2 } else { 1 };

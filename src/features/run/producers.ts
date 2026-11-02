@@ -18,6 +18,7 @@ import { goGenerateConfig } from "./goGenerate";
 import { goTestParts } from "./goArguments";
 import { contextConfig, fileRole, projectPython, testBasesFor, testConfigFor } from "./context";
 import { isWindows } from "./jvmTypes";
+import { appModule, fastApiApp, isFlaskApp } from "./fastapi";
 import { detectRunTargets, targetConfig, targetLanguage, type RunTarget } from "./targets";
 import { tx } from "@/platform/i18n";
 
@@ -638,6 +639,32 @@ export function produceFile(input: ContextInput, env: ToolEnv): Produced | null 
     case "python": {
       const py = pythonCommand(input, env, s);
       if (!py) return { name: s.file, scope: "file", missing: missing("python", s.file, ["python3", "python"]) };
+      // A FastAPI application file runs as PyCharm runs it: served by uvicorn, reloading.
+      const app = s.inProject ? fastApiApp(input.content) : null;
+      if (app)
+        return {
+          name: s.file,
+          scope: "file",
+          config: fileConfig(
+            s,
+            "fastapi",
+            py.command,
+            [...py.prefix, "-m", "uvicorn", `${appModule(s.arg)}:${app}`, "--reload"],
+            "debugpy",
+          ),
+        };
+      if (s.inProject && isFlaskApp(input.content))
+        return {
+          name: s.file,
+          scope: "file",
+          config: fileConfig(
+            s,
+            "flask",
+            py.command,
+            [...py.prefix, "-m", "flask", "--app", s.arg, "run", "--debug"],
+            "debugpy",
+          ),
+        };
       return {
         name: s.file,
         scope: "file",

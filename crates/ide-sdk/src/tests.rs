@@ -152,8 +152,11 @@ fn run_configs_use_selected_interpreter_and_package_manager() {
         run("pytest", "uv", &["run", "pytest", "-x"]),
         run("npm", "npm", &["run", "dev"]),
         run("shell", "python3", &["x.py"]),
+        run("fastapi", "uv", &["run", "python", "-m", "uvicorn", "main:app"]),
     ];
     apply_to_run_configs(&mut configs, tmp.path(), &s);
+    assert_eq!(configs[5].command, "/opt/py/bin/python3");
+    assert_eq!(configs[5].args, ["-m", "uvicorn", "main:app"]);
     assert_eq!(configs[0].command, "/opt/py/bin/python3");
     assert_eq!(configs[0].args, ["-m", "app"]);
     assert_eq!(configs[1].command, "/opt/py/bin/python3");

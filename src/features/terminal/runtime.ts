@@ -5,6 +5,7 @@ export {
   applyThemeToAll,
   closeAll,
   closePane,
+  getSession,
   newTab,
   newTabAt,
   requestClosePane,

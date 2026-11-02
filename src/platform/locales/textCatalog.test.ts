@@ -154,6 +154,8 @@ const UNTRANSLATED = new Set<string>([
   "Pyright",
   "pytest",
   "Python",
+  "FastAPI",
+  "Flask",
   "Rust",
   "Rustfmt",
   "SingleStore",
@@ -226,6 +228,8 @@ const UNTRANSLATED = new Set<string>([
   "tests",
   "main.py",
   "package.module",
+  "app.py",
+  "manage.py",
   '{ "section": { "key": "value" } }',
   // Identifiers that only look like text: icon names, error codes, categories, console output
   "app",

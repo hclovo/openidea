@@ -391,6 +391,39 @@ fn python_projects() {
     assert_eq!(ids(&c), ["python:module:app"]);
 }
 
+#[test]
+fn fastapi_applications() {
+    let dir = project(&[
+        ("requirements.txt", "fastapi\nuvicorn\n"),
+        ("main.py", "from fastapi import FastAPI\n\napi: FastAPI = FastAPI(title=\"x\")\n"),
+        ("app/main.py", "import fastapi\napp = fastapi.FastAPI()\n"),
+        ("app.py", "from fastapi import FastAPI\nimport uvicorn\napp = FastAPI()\nuvicorn.run(app)\n"),
+    ]);
+    let c = detect(dir.path());
+    assert_eq!(ids(&c), ["fastapi:main:api", "fastapi:app.main:app"]);
+    let main = find(&c, "fastapi:main:api");
+    assert_eq!(main.kind, "fastapi");
+    assert_eq!(cmdline(main), "python3 -m uvicorn main:api --reload");
+    assert_eq!(main.debug_adapter.as_deref(), Some("debugpy"));
+    assert_eq!(cmdline(find(&c, "fastapi:app.main:app")), "python3 -m uvicorn app.main:app --reload");
+}
+
+#[test]
+fn flask_and_django_servers() {
+    let dir = project(&[
+        ("requirements.txt", "flask\n"),
+        ("app.py", "from flask import Flask\n\napp = Flask(__name__)\n"),
+        ("wsgi.py", "from flask import Flask\napp = Flask(__name__)\napp.run()\n"),
+        ("manage.py", ""),
+    ]);
+    let c = detect(dir.path());
+    assert_eq!(ids(&c), ["django:runserver", "flask:app.py"]);
+    assert_eq!(find(&c, "django:runserver").kind, "django");
+    let flask = find(&c, "flask:app.py");
+    assert_eq!(flask.kind, "flask");
+    assert_eq!(cmdline(flask), "python3 -m flask --app app.py run --debug");
+}
+
 #[cfg(unix)]
 #[test]
 fn python_virtualenv() {
