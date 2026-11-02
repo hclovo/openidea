@@ -417,13 +417,15 @@ mod imp {
 mod imp {
     use super::{MachineStatus, Socket, shorten};
 
+    /// Runs a system tool, by absolute path: this also runs in Restricted Mode, where
+    /// the project must not be able to put its own `ps` first on the `PATH`.
     fn run(program: &str, args: &[&str]) -> Option<String> {
         let out = std::process::Command::new(program).args(args).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn sysctl(name: &str) -> Option<String> {
-        run("sysctl", &["-n", name]).map(|s| s.trim().to_owned())
+        run("/usr/sbin/sysctl", &["-n", name]).map(|s| s.trim().to_owned())
     }
 
     pub fn status() -> MachineStatus {
@@ -431,7 +433,7 @@ mod imp {
             memory_total: sysctl("hw.memsize").and_then(|v| v.parse().ok()).unwrap_or(0),
             ..Default::default()
         };
-        if let Some(vm) = run("vm_stat", &[]) {
+        if let Some(vm) = run("/usr/bin/vm_stat", &[]) {
             // "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
             let page = vm
                 .lines()
@@ -463,14 +465,16 @@ mod imp {
             .and_then(|v| v.split("sec = ").nth(1)?.split(',').next()?.trim().parse::<u64>().ok());
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         s.uptime_secs = boot.map_or(0, |b| now.saturating_sub(b));
-        s.kernel = run("uname", &["-r"]).unwrap_or_default().trim().to_owned();
-        s.os = format!("macOS {}", run("sw_vers", &["-productVersion"]).unwrap_or_default().trim()).trim().to_owned();
+        s.kernel = run("/usr/bin/uname", &["-r"]).unwrap_or_default().trim().to_owned();
+        s.os = format!("macOS {}", run("/usr/bin/sw_vers", &["-productVersion"]).unwrap_or_default().trim())
+            .trim()
+            .to_owned();
         s
     }
 
     /// The `ps` CPU shares of all processes (each a recent average) over all CPUs.
     pub fn cpu_busy() -> Option<f64> {
-        let out = run("ps", &["-A", "-o", "%cpu="])?;
+        let out = run("/bin/ps", &["-A", "-o", "%cpu="])?;
         let cpus = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
         let busy: f64 = out.lines().filter_map(|l| l.trim().parse::<f64>().ok()).sum();
         Some((busy / (cpus * 100.0)).clamp(0.0, 1.0))
@@ -480,7 +484,8 @@ mod imp {
     pub fn listening_sockets() -> Vec<Socket> {
         // SAFETY: `getuid` cannot fail.
         let uid = unsafe { libc::getuid() }.to_string();
-        let Some(out) = run("lsof", &["-nP", "-a", "-u", uid.as_str(), "-iTCP", "-sTCP:LISTEN", "-Fpn"]) else {
+        let Some(out) = run("/usr/sbin/lsof", &["-nP", "-a", "-u", uid.as_str(), "-iTCP", "-sTCP:LISTEN", "-Fpn"])
+        else {
             return Vec::new();
         };
         let mut sockets = Vec::new();
@@ -505,7 +510,7 @@ mod imp {
 
     /// (name, command line) of `pid`.
     pub fn describe(pid: u32) -> (Option<String>, Option<String>) {
-        let command = run("ps", &["-o", "command=", "-p", &pid.to_string()]).map(|c| shorten(&c, 200));
+        let command = run("/bin/ps", &["-o", "command=", "-p", &pid.to_string()]).map(|c| shorten(&c, 200));
         let name = command
             .as_deref()
             .and_then(|c| c.split_whitespace().next())

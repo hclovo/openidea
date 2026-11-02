@@ -32,7 +32,14 @@ impl AdapterLauncher for FakeLauncher {
         tokio::spawn(fake_adapter(server, log, script));
         let (r, w) = tokio::io::split(client);
         Box::pin(async move {
-            Ok(AdapterIo { reader: Box::new(r), writer: Box::new(w), child: None, port: None, stderr: Arc::default() })
+            Ok(AdapterIo {
+                reader: Box::new(r),
+                writer: Box::new(w),
+                child: None,
+                port: None,
+                stderr: Arc::default(),
+                program_output: None,
+            })
         })
     }
 }
@@ -898,6 +905,7 @@ fn godot_registry(port: u16, command: &str, args: &[&str]) -> Arc<LanguageRegist
         indent: None,
         ui_mode: None,
         framework_ui_modes: Vec::new(),
+        formatter: None,
         tree_sitter: None,
         language_servers: vec![],
         debugger: Some(ide_language::DebuggerConfig {

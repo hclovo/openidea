@@ -86,6 +86,9 @@ function paneMenu(e: MouseEvent, key: string) {
   e.preventDefault();
   const session = getSession(key);
   if (!session) return;
+  // Right-clicking focuses the terminal, like IDEA; otherwise the menu closing
+  // restores focus to whatever was focused before it, often the editor.
+  session.focus();
   const exited = session.state.status === "exited" || session.state.status === "error";
   const mac = usePlatform.getState().os === "macos";
   const items: MenuItem[] = [
@@ -99,12 +102,7 @@ function paneMenu(e: MouseEvent, key: string) {
     {
       label: "Paste",
       shortcut: mac ? "⌘V" : "Ctrl+Shift+V",
-      run: () => {
-        void navigator.clipboard
-          ?.readText()
-          .then((t) => t && session.paste(t))
-          .catch(() => undefined);
-      },
+      run: () => void session.pasteClipboard(),
     },
     { label: "Select All", run: () => session.term.selectAll() },
     { kind: "separator" },

@@ -60,8 +60,19 @@ export function uiModeForPath(path: string): string | null | undefined {
 
 const supports = new Map<string, Promise<LanguageSupport | null>>();
 
-/** Frontend modes with template syntax missing from the bundled parsers. */
+/** Frontend modes that extend or replace the bundled parsers. */
 const OWN_MODES = [
+  LanguageDescription.of({
+    name: "CMake",
+    extensions: ["cmake", "cmake.in"],
+    filename: /^(?:CMakeLists\.txt|.*\.cmake(?:\.in)?)$/,
+    load: async () => new LanguageSupport((await import("./cmake")).cmakeLanguage),
+  }),
+  LanguageDescription.of({
+    name: "AsciiDoc",
+    extensions: ["adoc", "asciidoc"],
+    load: () => import("./asciidoc").then((m) => new LanguageSupport(m.asciidocLanguage)),
+  }),
   LanguageDescription.of({
     name: "Shell",
     load: async () => {
@@ -169,6 +180,8 @@ export function findLanguageDescription(uiMode: string | null, path: string): La
     if (loose) return OWN_MODES.find((l) => l.name === loose.name) ?? loose;
   }
   if (uiMode === null && infos) return null;
+  const own = LanguageDescription.matchFilename(OWN_MODES, path.slice(path.lastIndexOf("/") + 1));
+  if (own) return own;
   const matched = LanguageDescription.matchFilename(BUILTIN_MODES, path.slice(path.lastIndexOf("/") + 1));
   return OWN_MODES.find((l) => l.name === matched?.name) ?? matched;
 }
@@ -200,8 +213,15 @@ const CSS_TAGS: Parameters<typeof styleTags>[0] = {
   "ClassName IdName PseudoClassName ColorLiteral CallTag": t.tagName,
 };
 
+// @lezer/javascript styles `.` as a deref operator, but not `?.`.
+const JS_TAGS: Parameters<typeof styleTags>[0] = { "?.": t.derefOperator };
+
 /** Highlighting the stock grammars lack or colour unlike IntelliJ. */
 const EXTRA_TAGS: Record<string, Parameters<typeof styleTags>[0]> = {
+  JavaScript: JS_TAGS,
+  TypeScript: JS_TAGS,
+  JSX: JS_TAGS,
+  TSX: JS_TAGS,
   // @lezer/java tags annotations as plain identifiers.
   Java: { "MarkerAnnotation/Identifier Annotation/Identifier MarkerAnnotation Annotation": t.annotation },
   CSS: CSS_TAGS,
@@ -230,7 +250,7 @@ const DEDENT_STATEMENT = /^\s*(?:pass|break|continue|return)\b/;
 const KEYWORD_OPEN_LANGS = new Set(["elixir", "ruby", "lua"]);
 const KEYWORD_OPEN =
   /\b(?:do(?:\s*\|[^|]*\|)?|then|->)$|^\s*(?:def|defp|defmodule|class|module|function|local\s+function|if|unless|elsif|elseif|else|while|until|for|case|begin|cond|with|receive|try)\b/;
-const NO_INDENT_LANGS = new Set(["plaintext", "markdown", "log", "diff", "ignore", "gitattributes"]);
+const NO_INDENT_LANGS = new Set(["plaintext", "markdown", "asciidoc", "log", "diff", "ignore", "gitattributes"]);
 
 function opensBlock(code: string, language: string | undefined): boolean {
   if (!code) return false;

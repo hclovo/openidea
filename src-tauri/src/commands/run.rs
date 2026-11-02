@@ -8,6 +8,40 @@ use ide_run::{OutputChunk, RunConfig, RunInfo};
 use tauri::ipc::Channel;
 use tauri::{State, Window};
 
+#[tauri::command]
+#[specta::specta]
+pub async fn run_dotnet_resolve(
+    window: Window,
+    state: State<'_, AppState>,
+    config: RunConfig,
+    debug: bool,
+) -> IdeResult<RunConfig> {
+    ide_host::ops::run::run_dotnet_resolve(&state.host, window.label(), config, debug).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn run_application_build(
+    window: Window,
+    state: State<'_, AppState>,
+    config: RunConfig,
+    module: std::path::PathBuf,
+) -> IdeResult<RunConfig> {
+    ide_host::ops::run::run_application_build(&state.host, window.label(), config, module).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn run_application_publish(
+    window: Window,
+    state: State<'_, AppState>,
+    config: RunConfig,
+    class_paths: Vec<String>,
+    main_class: String,
+) -> IdeResult<()> {
+    ide_host::ops::run::run_application_publish(&state.host, window.label(), config, class_paths, main_class).await
+}
+
 /// Detected configs followed by user-defined ones (user ids win on conflict).
 #[tauri::command]
 #[specta::specta]

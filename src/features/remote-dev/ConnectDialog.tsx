@@ -6,11 +6,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { executeAction } from "@/platform/actions";
 import { useTx } from "@/platform/i18n";
-import { call, commands, type RemoteEntry } from "@/platform/ipc";
+import { call, commands, isCancelled, type RemoteEntry } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import { recentRemotes, useRemote, useRemoteProgress, withSshRetry } from "@/platform/remote";
 import { Button, Dialog, Icon, Input, ProgressBar, Select, Spinner, type DialogButton } from "@/ui";
-import { openPolicy, openRemoteProject } from "@/workbench/projectWindow";
+import { openRemoteProject } from "@/workbench/projectWindow";
 import { openLocalProjectDialog } from "@/workbench/shellActions";
 import {
   browsableFolders,
@@ -39,6 +39,8 @@ function ConnectDialog({ request }: { request: ConnectRequest }) {
   const hosts = useSshHosts();
   const session = useRemote((s) => s.session);
   const hasProject = useProject((s) => !!s.project || s.lightEdit);
+  // System Settings › Project › "Open project in".
+  const openProjectIn = useProject((s) => s.settings?.general?.openProjectIn);
   const startHost = request.sshConfig ?? session?.sshConfig;
   // The hosts of ~/.ssh/config arrive after the dialog opens: until one is chosen, the first host.
   const [chosen, setSsh] = useState(startHost ?? "");
@@ -60,7 +62,7 @@ function ConnectDialog({ request }: { request: ConnectRequest }) {
     setError(null);
     setListing(true);
     try {
-      const entries = await withSshRetry(ssh, () => call(commands.remoteList(ssh, dir)));
+      const entries = await withSshRetry(ssh, () => call(commands.remoteBootstrapList(ssh, dir)));
       if (request !== listings.current) return;
       const shown = listedDirectory(dir, entries);
       setBrowse({ dir: shown, folders: browsableFolders(entries) });
@@ -95,17 +97,21 @@ function ConnectDialog({ request }: { request: ConnectRequest }) {
     setBusy(true);
     try {
       const target = path.trim() || "~";
-      if (await openRemoteProject(ssh, target, undefined, mode)) closeConnectDialog();
+      const opened = mode
+        ? await openRemoteProject(ssh, target, undefined, mode)
+        : await openRemoteProject(ssh, target);
+      if (opened) closeConnectDialog();
       else setBusy(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isCancelled(e)) setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   };
 
   const options = hosts.map(hostOption);
-  const ready = !!ssh && !busy && !!path.trim();
-  const preferNew = request.target === "new" || openPolicy() === "new";
+  // Not while a listing is out: it moves the path.
+  const ready = !!ssh && !busy && !listing && !!path.trim();
+  const preferNew = request.target === "new" || openProjectIn === "new";
   const buttons: DialogButton[] = !hasProject
     ? [{ label: connecting ? "Connecting…" : "Open", role: "default", disabled: !ready, onClick: () => void open() }]
     : [

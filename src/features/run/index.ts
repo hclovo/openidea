@@ -35,14 +35,16 @@ import { debugWithAgent, jdwpLaunch } from "./javaDebug";
 import { RunDialogsOverlay } from "./dialogs";
 import { registerExternalTools } from "./externalTools";
 import { EditConfigsOverlay } from "./EditConfigsDialog";
+import { registerGoActions } from "./goActions";
+import { invalidateGoModules } from "./goModules";
 import { RunWidget } from "./RunWidget";
 import { runConfigsRunAnything } from "./runAnything";
-import { runServiceProvider } from "./services";
+import { recordRun, runServiceProvider } from "./services";
 import { runBeforeLaunch } from "./beforeLaunch";
 import { compoundChildren } from "./configs";
 import { remoteDebugBlocked } from "./remote";
 import { isDebugOnly, registerBuiltinTypes } from "./types";
-import { showTomcatUpdate } from "./tomcatUpdate";
+import { listenForApplicationDeactivation, showApplicationUpdate, updatableSessions } from "./applicationUpdate";
 import { runGutter } from "./runGutter";
 import { activateStackTrace, useStackTraces } from "./stackTrace";
 import { clearRuntimeCache } from "./runtimes";
@@ -104,6 +106,7 @@ async function debugConfig(config: RunConfig, chain: readonly string[] = []) {
   }
   if (remoteDebugBlocked(config)) return;
   if (!(await prepareLaunch(config, chain))) return;
+  recordRun(config.id);
   // Remote JVM Debug, Go Remote…: the debugger attaches, nothing is launched here.
   if (isDebugOnly(config) && getAction("debug.startConfig")) {
     await executeAction("debug.startConfig", config);
@@ -245,7 +248,7 @@ function useRunningCount(): number | null {
 }
 
 const CONFIG_FILES =
-  /(?:^|\/)(?:\.openidea\/run\.toml|package\.json|deno\.jsonc?|Cargo\.toml|build\.gradle(?:\.kts)?|pom\.xml|go\.mod|pyproject\.toml|setup\.cfg|pytest\.ini|manage\.py|Makefile|justfile)$/;
+  /(?:^|\/)(?:\.openidea\/run\.toml|package\.json|deno\.jsonc?|Cargo\.toml|build\.gradle(?:\.kts)?|pom\.xml|go\.(?:mod|work)|pyproject\.toml|setup\.cfg|pytest\.ini|manage\.py|Makefile|justfile|CMakeLists\.txt|CMakeCache\.txt|index-[^/]+\.json)$/;
 
 let reloadTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleReload() {
@@ -269,6 +272,7 @@ export function activate(): () => void {
     registerTitleItem({ id: "run.widget", title: "Run Widget", align: "right", priority: 0, component: RunWidget }),
     registerRunAnythingProvider(runConfigsRunAnything),
     registerBuiltinTypes(),
+    registerGoActions(),
     registerOverlay({ id: "run.chooser", component: ConfigChooserOverlay }),
     registerOverlay({ id: "run.editConfigs", component: EditConfigsOverlay }),
     registerOverlay({ id: "run.dialogs", component: RunDialogsOverlay }),
@@ -276,6 +280,8 @@ export function activate(): () => void {
     onWorkflowSettingsChange((w) => w.console, applyConsoleSettings),
     registerExternalTools(),
     activateStackTrace(),
+    listenForApplicationDeactivation(),
+    useDebugRunSessions.subscribe(() => setContext("run.updatableRunning", updatableSessions().length > 0)),
     registerEditorContribution({ id: "run.targets", order: 55, extensions: runGutter }),
     registerMenuGroup({
       id: "run.context",
@@ -289,8 +295,8 @@ export function activate(): () => void {
         title: "Update Application",
         category: "Run",
         icon: "refresh",
-        when: "run.tomcatRunning",
-        run: () => showTomcatUpdate(),
+        when: "run.updatableRunning",
+        run: () => showApplicationUpdate(),
       },
       {
         id: "run.run",
@@ -506,13 +512,10 @@ export function activate(): () => void {
     // Lets other title items follow the selected configuration (e.g. Build shows only for compiled ones).
     useRun.subscribe((s) => {
       setContext("run.selectedKind", s.configs.find((c) => c.id === s.selectedId)?.kind ?? "");
-      setContext(
-        "run.tomcatRunning",
-        s.sessions.some((session) => session.config.kind === "tomcat" && session.status === "running"),
-      );
+      setContext("run.updatableRunning", updatableSessions().length > 0);
     }),
     useProject.subscribe((s, prev) => {
-      if (s.project?.root === prev.project?.root) return;
+      if (s.project?.root === prev.project?.root && s.project?.trusted === prev.project?.trusted) return;
       resetRuns();
       useStackTraces.setState({ tabs: [], dialog: null });
       if (s.project) void loadConfigs();
@@ -527,11 +530,22 @@ export function activate(): () => void {
   disposers.push(
     onIdeEvent("fsChanged", (e) => {
       const paths = [...e.created, ...e.modified, ...e.removed];
+      if (paths.some((p) => /(?:^|\/)go\.(?:mod|work)$/.test(p))) invalidateGoModules();
       if (paths.some((p) => CONFIG_FILES.test(p))) scheduleReload();
+    }),
+    onIdeEvent("runExited", (e) => {
+      if (useRun.getState().sessions.some((s) => s.runId === e.run && s.config.kind === "cmake")) scheduleReload();
     }),
     // Detected configs carry the selected toolchains (interpreter, JDK, Maven home and options).
     onIdeEvent("settingsChanged", (e) => {
-      if (e.key === "languages" || e.key.startsWith("languages.")) scheduleReload();
+      if (
+        !e.key ||
+        e.key === "languages" ||
+        e.key.startsWith("languages.") ||
+        e.key === "cmake" ||
+        e.key.startsWith("cmake.")
+      )
+        scheduleReload();
     }),
   );
 
