@@ -18,7 +18,7 @@ import { ConnectHost } from "./ConnectDialog";
 import { reloadEnvironment } from "./environment";
 import { ForwardPortHost } from "./ForwardPortDialog";
 import { HOST_STATUS_WIDGET, HostStatusWidget } from "./HostStatus";
-import { resetHostStatus, useHostStatus } from "./hostStatus";
+import { resetHostStatus, useHostStatus } from "./hostStatusStore";
 import { closeConnectDialog, openConnectDialog } from "./model";
 import {
   PORTS_WINDOW,

@@ -24,7 +24,7 @@ import {
   savedForwards,
   usedShare,
 } from "./model";
-import { servesHostStatus } from "./hostStatus";
+import { servesHostStatus } from "./hostStatusStore";
 
 const entry = (path: string, isDir = true): RemoteEntry => ({
   name: path.slice(path.lastIndexOf("/") + 1),

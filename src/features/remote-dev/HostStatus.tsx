@@ -19,7 +19,7 @@ import {
   refreshHostStatus,
   servesHostStatus,
   useHostStatus,
-} from "./hostStatus";
+} from "./hostStatusStore";
 import { formatLoad, percent, remoteAddress, resourceLevel, usedShare } from "./model";
 import { openInBrowser, showForwardDialog, showPortsWindow, stopForwarding, usePorts } from "./ports";
 import styles from "./RemoteDev.module.css";
