@@ -96,3 +96,30 @@ pub fn transfer_fullscreen(from: &WebviewWindow, to: &WebviewWindow) -> tauri::R
         native.toggleFullScreen(None);
     })
 }
+
+/// Gives `to` the frame of `from` before it is shown. tao queues `set_position` and `set_size`
+/// on the main dispatch queue, where they ran after the `show` following them: the selected tab
+/// appeared at its old frame, then jumped (and `setContentSize:` keeps the bottom-left corner, so
+/// a different height also moved the top edge). The exact frame carries a zoomed one too.
+pub fn copy_frame(from: &WebviewWindow, to: &WebviewWindow) -> IdeResult<()> {
+    fn copy(from: &WebviewWindow, to: &WebviewWindow) -> tauri::Result<()> {
+        let (from, to) = (from.ns_window()?, to.ns_window()?);
+        // SAFETY: on the AppKit thread, while both windows are open.
+        unsafe {
+            let (from, to) = (&*from.cast::<NSWindow>(), &*to.cast::<NSWindow>());
+            to.setFrame_display(from.frame(), true);
+        }
+        Ok(())
+    }
+    let err = |e: tauri::Error| IdeError::internal(e.to_string());
+    if MainThreadMarker::new().is_some() {
+        return copy(from, to).map_err(err);
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let (source, target) = (from.clone(), to.clone());
+    to.run_on_main_thread(move || {
+        let _ = tx.send(copy(&source, &target));
+    })
+    .map_err(err)?;
+    rx.recv().map_err(|e| IdeError::internal(e.to_string()))?.map_err(err)
+}

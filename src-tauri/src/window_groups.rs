@@ -61,18 +61,25 @@ fn copy_frame(from: &WebviewWindow, to: &WebviewWindow) -> IdeResult<()> {
         return Ok(());
     }
     to.set_fullscreen(false).map_err(err)?;
-    let maximized = from.is_maximized().map_err(err)?;
-    if !maximized {
-        to.unmaximize().map_err(err)?;
-        to.set_position(from.outer_position().map_err(err)?).map_err(err)?;
-        let size = from.inner_size().map_err(err)?;
-        #[cfg(target_os = "linux")]
-        crate::linux_window_state::normal_size_requested(to.app_handle(), to.label(), size);
-        to.set_size(size).map_err(err)?;
-    } else {
-        to.maximize().map_err(err)?;
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::copy_frame(from, to)
     }
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    {
+        let maximized = from.is_maximized().map_err(err)?;
+        if !maximized {
+            to.unmaximize().map_err(err)?;
+            to.set_position(from.outer_position().map_err(err)?).map_err(err)?;
+            let size = from.inner_size().map_err(err)?;
+            #[cfg(target_os = "linux")]
+            crate::linux_window_state::normal_size_requested(to.app_handle(), to.label(), size);
+            to.set_size(size).map_err(err)?;
+        } else {
+            to.maximize().map_err(err)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn select(app: &AppHandle, caller: &str, target: &str) -> IdeResult<()> {

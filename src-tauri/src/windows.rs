@@ -404,11 +404,19 @@ fn create_window_for(
         config.center = false;
     }
     app.state::<WindowsState>().set_launch(&label, launch);
+    // A new tab stays hidden until `join` has given it the group's frame.
+    #[cfg(target_os = "macos")]
+    if tab_target.is_some() {
+        config.visible = false;
+    }
     let window = build_project_window(app, config)?;
     #[cfg(target_os = "macos")]
     if let Some(target) = tab_target {
-        crate::window_groups::join(app, target.label(), window.label())?;
-        return Ok(window);
+        let joined = crate::window_groups::join(app, target.label(), window.label());
+        if joined.is_err() {
+            focus(&window);
+        }
+        return joined.map(|()| window);
     }
     focus(&window);
     Ok(window)
