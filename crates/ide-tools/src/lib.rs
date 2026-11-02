@@ -405,6 +405,13 @@ pub fn managed_bundle(app_data: &Path, name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// An app-owned tool of the tools directory `root`, materialized when missing (debugpy's
+/// private copy for the debugger: no pip or network needed).
+pub fn bundled_tool(root: &Path, name: &str) -> Option<PathBuf> {
+    let spec = registry::find(name).filter(|s| matches!(s.method, Method::Bundled { .. }))?;
+    bundled::install(root, spec).ok()
+}
+
 /// Installer and detector over one tools directory.
 pub struct Tools {
     root: PathBuf,

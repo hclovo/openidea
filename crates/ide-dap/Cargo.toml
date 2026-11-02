@@ -10,6 +10,7 @@ tempfile.workspace = true
 ide-core.workspace = true
 ide-language.workspace = true
 ide-jsonrpc.workspace = true
+ide-tools = { path = "../ide-tools" }
 serde.workspace = true
 serde_json.workspace = true
 specta.workspace = true

@@ -262,7 +262,7 @@ fn xcrun_tool(_command: &str) -> Option<PathBuf> {
     None
 }
 
-/// Name of the managed debugpy install (ide-tools `PipTarget`, unpacked into `<tools>/debugpy/lib`).
+/// Name of the managed debugpy install (ide-tools' bundled wheel, unpacked into `<tools>/debugpy/lib`).
 pub const DEBUGPY_TOOL: &str = "debugpy";
 
 /// Message prefix of the "debugpy missing" error; the UI offers the one-click install on it.
@@ -291,7 +291,15 @@ pub async fn prepare_debugpy(spec: &mut AdapterSpec) -> IdeResult<()> {
     {
         return Ok(());
     }
-    let lib = tools_root().map(|r| r.join(DEBUGPY_TOOL).join("lib"));
+    // OpenIDEA's copy, unpacked from the one built into the app when missing (no pip, no network).
+    let lib = tools_root().and_then(|r| {
+        let lib = r.join(DEBUGPY_TOOL).join("lib");
+        if lib.join("debugpy").join("__init__.py").is_file() {
+            Some(lib)
+        } else {
+            ide_tools::bundled_tool(&r, DEBUGPY_TOOL)
+        }
+    });
     if let Some(lib) = lib.filter(|l| l.join("debugpy").join("__init__.py").is_file()) {
         let mut paths = vec![lib];
         paths.extend(
@@ -586,7 +594,7 @@ mod tests {
         assert_eq!(sink.lock().len(), 3);
     }
 
-    /// Managed tools win over `PATH`, and debugpy falls back to the private copy.
+    /// Managed tools win over `PATH`, and debugpy falls back to the private copy, built in.
     #[cfg(unix)]
     #[tokio::test]
     async fn managed_tools_and_private_debugpy() {
@@ -608,13 +616,10 @@ mod tests {
 
         let mut spec = resolve(&builtin("debugpy").unwrap(), root.clone());
         spec.command = python.to_string_lossy().into_owned();
-        let err = prepare_debugpy(&mut spec).await.unwrap_err();
-        assert!(err.message.starts_with(DEBUGPY_MISSING), "{}", err.message);
-
-        let lib = root.join(DEBUGPY_TOOL).join("lib");
-        std::fs::create_dir_all(lib.join("debugpy")).unwrap();
-        std::fs::write(lib.join("debugpy").join("__init__.py"), "").unwrap();
+        // No copy yet: the one built into the app is unpacked, without pip or a download.
         prepare_debugpy(&mut spec).await.unwrap();
+        let lib = root.join(DEBUGPY_TOOL).join("lib");
+        assert!(lib.join("debugpy").join("adapter").join("__main__.py").is_file());
         let (k, v) = &spec.env[0];
         assert_eq!(k, "PYTHONPATH");
         assert!(v.starts_with(&*lib.to_string_lossy()), "{v}");

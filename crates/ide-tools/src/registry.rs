@@ -371,7 +371,13 @@ pub static TOOLS: &[ToolSpec] = &[
         display: "debugpy (Python debugger)",
         kind: Debugger,
         commands: &["python3"],
-        method: Method::PipTarget { package: "debugpy", module: "debugpy" },
+        // Built in like PyCharm's debugger: hosts without pip or PyPI access debug too.
+        // Source and checksum: plugins/debugpy/README.md.
+        method: Method::Bundled {
+            filename: "debugpy-1.8.22-py2.py3-none-any.whl",
+            version: "1.8.22",
+            bytes: include_bytes!("../../../plugins/debugpy/debugpy-1.8.22-py2.py3-none-any.whl"),
+        },
         fallback: None,
         version: V,
         homepage: "https://github.com/microsoft/debugpy",

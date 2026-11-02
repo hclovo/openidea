@@ -4134,6 +4134,7 @@ dependencies = [
  "ide-core",
  "ide-jsonrpc",
  "ide-language",
+ "ide-tools",
  "memchr",
  "parking_lot",
  "serde",
