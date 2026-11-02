@@ -71,9 +71,12 @@ jobs:
           - name: Linux x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            # RPM rejects a fork version such as 0.1.33-1; Ubuntu installs the .deb or the AppImage.
+            bundles: deb,appimage
           - name: Linux arm64
             os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
+            bundles: deb,appimage
           # This fork releases macOS and Linux only (no Windows builds).
     runs-on: ${{ matrix.os }}
     steps:
@@ -118,7 +121,7 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ env.TAG }}
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }}${{ matrix.bundles && format(' --bundles {0}', matrix.bundles) || '' }}
           # The parallel builds would race on one latest.json; `updater-manifest` writes it once.
           uploadUpdaterJson: false
       # tauri-action notarizes the .app but not the DMG around it; notarize and
