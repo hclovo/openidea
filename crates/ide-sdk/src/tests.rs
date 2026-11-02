@@ -1,6 +1,6 @@
 use crate::apply::{
-    apply_to_run_configs, configure_server, jdtls_jdk, maven_command, maven_options, project_jdk, python_interpreter,
-    terminal_activation, tsdk,
+    activate_venv, apply_to_run_configs, configure_server, jdtls_jdk, maven_command, maven_options, project_jdk,
+    python_interpreter, terminal_activation, tsdk, venv_activation,
 };
 use crate::python::parse_pip_list;
 use crate::{bin_dir, exe, venv_of};
@@ -161,6 +161,40 @@ fn run_configs_use_selected_interpreter_and_package_manager() {
     assert_eq!(configs[2].args, ["-m", "pytest", "-x"]);
     assert_eq!(configs[3].command, "pnpm");
     assert_eq!(configs[4].command, "python3", "shell configs are left alone");
+}
+
+#[test]
+fn listed_configs_keep_their_environment_and_processes_get_the_virtualenv() {
+    if cfg!(windows) {
+        return; // Unix paths and shells
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let venv = venv_of(&fake_venv(tmp.path(), ".venv")).unwrap();
+    let s = Settings::default();
+    let mut configs = vec![run("python", "python3", &["main.py"]), run("external", "/bin/sh", &["-c", "pytest"])];
+    configs[0].env.insert("GREETING".into(), "hi".into());
+    apply_to_run_configs(&mut configs, tmp.path(), &s);
+    // Shown and saved as the user typed it: no VIRTUAL_ENV / PATH snapshot.
+    assert_eq!(configs[0].env, BTreeMap::from([("GREETING".to_owned(), "hi".to_owned())]));
+    assert!(configs[1].env.is_empty());
+    let env = venv_activation(tmp.path(), &s);
+    assert_eq!(env["VIRTUAL_ENV"], venv.to_string_lossy());
+    assert_eq!(std::env::split_paths(&env["PATH"]).next().unwrap(), venv.join(bin_dir()));
+
+    // Starting them: Python, Run Anything and external tools run in it; other kinds don't.
+    let mut shell = run("shell", "./run.sh", &[]);
+    for config in configs.iter_mut().chain(std::iter::once(&mut shell)) {
+        activate_venv(config, tmp.path(), &s);
+    }
+    assert_eq!(configs[0].env["GREETING"], "hi");
+    assert_eq!(configs[0].env["VIRTUAL_ENV"], venv.to_string_lossy());
+    assert_eq!(configs[1].env["PATH"], env["PATH"]);
+    assert!(shell.env.is_empty());
+    // A virtualenv the configuration names wins, with the PATH it has.
+    let mut named = run("python", "python3", &["main.py"]);
+    named.env.insert("VIRTUAL_ENV".into(), "/other".into());
+    activate_venv(&mut named, tmp.path(), &s);
+    assert_eq!(named.env, BTreeMap::from([("VIRTUAL_ENV".to_owned(), "/other".to_owned())]));
 }
 
 fn fake_jdk(dir: &Path) {

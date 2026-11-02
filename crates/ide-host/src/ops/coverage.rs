@@ -15,10 +15,11 @@ pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> IdeResult<T> + Send
 
 /// How to run `config` with coverage: the command to launch and where its report will be,
 /// or which tool is missing.
-pub async fn coverage_prepare(host: &Host, window: &str, config: RunConfig) -> IdeResult<CoveragePrepared> {
+pub async fn coverage_prepare(host: &Host, window: &str, mut config: RunConfig) -> IdeResult<CoveragePrepared> {
     host.require_trust(window)?;
     let project = host.project(window)?;
     let (root, cache) = (project.root.clone(), project.cache_dir.join("coverage"));
+    ide_sdk::apply::activate_venv(&mut config, &root, &project.settings.effective());
     blocking(move || {
         let out = ide_run::wrap::new_output_dir(&cache, KEEP_RUNS)?;
         Ok(ide_coverage::prepare(&root, &config, &out))

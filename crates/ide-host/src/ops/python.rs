@@ -19,7 +19,13 @@ pub(super) fn paths(project: &Project) -> Vec<PathBuf> {
     paths
 }
 
-pub(super) fn prepare_debug(config: &mut LaunchConfig, paths: &[PathBuf]) -> IdeResult<()> {
+/// A debugpy launch: the project's import roots on `PYTHONPATH`, and its virtualenv activated
+/// (`venv`, from [`ide_sdk::apply::venv_activation`]) unless the environment names one.
+pub(super) fn prepare_debug(
+    config: &mut LaunchConfig,
+    paths: &[PathBuf],
+    venv: &BTreeMap<String, String>,
+) -> IdeResult<()> {
     // Adapter-specific env takes precedence over the common launch fields in DAP.
     let mut extra: Option<serde_json::Value> = config.extra_json.as_deref().and_then(|s| serde_json::from_str(s).ok());
     // A custom adapter may run on another host; local paths are not portable.
@@ -39,9 +45,21 @@ pub(super) fn prepare_debug(config: &mut LaunchConfig, paths: &[PathBuf]) -> Ide
         }
         ide_run::python_path::extend(&mut vars, paths, env.get("PYTHONPATH").is_none())?;
         env["PYTHONPATH"] = serde_json::json!(vars["PYTHONPATH"]);
+        if env.get("VIRTUAL_ENV").is_none() {
+            for (key, value) in venv {
+                if env.get(key).is_none() {
+                    env[key.as_str()] = serde_json::json!(value);
+                }
+            }
+        }
         config.extra_json = extra.map(|e| e.to_string());
     } else {
         ide_run::python_path::extend(&mut config.env, paths, true)?;
+        if !config.env.contains_key("VIRTUAL_ENV") {
+            for (key, value) in venv {
+                config.env.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
     }
     Ok(())
 }
@@ -64,11 +82,11 @@ mod tests {
             extra_json: Some(serde_json::json!({"env": null, "debugServer": "remote:5678"}).to_string()),
         };
         let before = config.extra_json.clone();
-        prepare_debug(&mut config, std::slice::from_ref(&root)).unwrap();
+        prepare_debug(&mut config, std::slice::from_ref(&root), &BTreeMap::new()).unwrap();
         assert_eq!(config.extra_json, before);
         assert!(config.env.is_empty());
         config.extra_json = Some(serde_json::json!({"env": null}).to_string());
-        prepare_debug(&mut config, std::slice::from_ref(&root)).unwrap();
+        prepare_debug(&mut config, std::slice::from_ref(&root), &BTreeMap::new()).unwrap();
         let value: serde_json::Value = serde_json::from_str(config.extra_json.as_deref().unwrap()).unwrap();
         let paths = std::env::split_paths(value["env"]["PYTHONPATH"].as_str().unwrap()).collect::<Vec<_>>();
         assert_eq!(paths[0], root);
@@ -90,7 +108,7 @@ mod tests {
                 env: vars.clone(),
                 extra_json: extra.then(|| serde_json::json!({"env": vars}).to_string()),
             };
-            prepare_debug(&mut config, std::slice::from_ref(&root)).unwrap();
+            prepare_debug(&mut config, std::slice::from_ref(&root), &BTreeMap::new()).unwrap();
             let vars: BTreeMap<String, String> = if extra {
                 let value: serde_json::Value = serde_json::from_str(config.extra_json.as_deref().unwrap()).unwrap();
                 serde_json::from_value(value["env"].clone()).unwrap()
@@ -99,5 +117,41 @@ mod tests {
             };
             assert_eq!(std::env::split_paths(&vars["PYTHONPATH"]).collect::<Vec<_>>(), [root, vendor]);
         }
+    }
+
+    #[test]
+    fn debug_activates_the_project_virtualenv_unless_one_is_named() {
+        let root = std::env::temp_dir().join("project");
+        let venv = BTreeMap::from([
+            ("VIRTUAL_ENV".to_owned(), "/p/.venv".to_owned()),
+            ("PATH".to_owned(), "/p/.venv/bin:/usr/bin".to_owned()),
+        ]);
+        let launch = |env: BTreeMap<String, String>, extra: bool| LaunchConfig {
+            name: "Python".into(),
+            adapter: "debugpy".into(),
+            request: "launch".into(),
+            program: Some("main.py".into()),
+            args: vec![],
+            cwd: None,
+            env: env.clone(),
+            extra_json: extra.then(|| serde_json::json!({ "env": env }).to_string()),
+        };
+        for extra in [false, true] {
+            let mut config = launch(BTreeMap::new(), extra);
+            prepare_debug(&mut config, std::slice::from_ref(&root), &venv).unwrap();
+            let vars: BTreeMap<String, String> = if extra {
+                let value: serde_json::Value = serde_json::from_str(config.extra_json.as_deref().unwrap()).unwrap();
+                serde_json::from_value(value["env"].clone()).unwrap()
+            } else {
+                config.env
+            };
+            assert_eq!(vars["VIRTUAL_ENV"], "/p/.venv");
+            assert_eq!(vars["PATH"], "/p/.venv/bin:/usr/bin");
+        }
+        // A virtualenv the configuration names wins, with the PATH it has.
+        let mut config = launch(BTreeMap::from([("VIRTUAL_ENV".to_owned(), "/other".to_owned())]), false);
+        prepare_debug(&mut config, std::slice::from_ref(&root), &venv).unwrap();
+        assert_eq!(config.env["VIRTUAL_ENV"], "/other");
+        assert!(!config.env.contains_key("PATH"));
     }
 }

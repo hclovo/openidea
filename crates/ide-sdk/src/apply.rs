@@ -10,6 +10,7 @@ use ide_core::version_managers::Tool;
 use ide_language::{LanguageConfig, LanguageServerConfig};
 use ide_run::RunConfig;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -597,13 +598,36 @@ fn is_python_command(cmd: &str) -> bool {
 
 const PY_RUNNERS: [&str; 3] = ["uv", "poetry", "pdm"];
 
+/// What activating the project's virtualenv sets for a process: `VIRTUAL_ENV`, and its
+/// scripts first on the `PATH`; empty without one. Applied as a process starts (a Python
+/// configuration, Run Anything, an external tool, a debugpy launch), not to the listed
+/// configurations: their environment is what the user typed, and what is saved.
+pub fn venv_activation(root: &Path, s: &Settings) -> BTreeMap<String, String> {
+    let Some(venv) = python_interpreter(root, s).as_deref().and_then(venv_of) else { return BTreeMap::new() };
+    let bin = venv.join(bin_dir());
+    BTreeMap::from([
+        ("VIRTUAL_ENV".to_owned(), venv.to_string_lossy().into_owned()),
+        ("PATH".to_owned(), path_with(&[bin.as_path()])),
+    ])
+}
+
+/// A Python configuration, Run Anything or an external tool about to run (or be wrapped by
+/// coverage or a profiler) gets the project's virtualenv, as the terminal does, unless its
+/// environment names one.
+pub fn activate_venv(config: &mut RunConfig, root: &Path, s: &Settings) {
+    if matches!(config.kind.as_str(), "python" | "pytest" | "external") && !config.env.contains_key("VIRTUAL_ENV") {
+        for (key, value) in venv_activation(root, s) {
+            config.env.entry(key).or_insert(value);
+        }
+    }
+}
+
 /// Points run configurations at the selected toolchains: Python configs use the
 /// project interpreter, npm scripts the chosen package manager and Node.js,
 /// cargo / go configs the selected toolchain, Maven / Gradle the project JDK
 /// (and Maven the configured home and options).
 pub fn apply_to_run_configs(configs: &mut [RunConfig], root: &Path, s: &Settings) {
     let explicit_python = setting_path(root, &s.languages.python.interpreter);
-    let python = python_interpreter(root, s);
     let pm = non_empty(&s.languages.node.package_manager);
     let node = node_dir(root, s);
     let rust = rust_bin(root, s);
@@ -636,12 +660,6 @@ pub fn apply_to_run_configs(configs: &mut [RunConfig], root: &Path, s: &Settings
                         c.command = py.to_string_lossy().into_owned();
                         c.args = ["-m".to_owned(), "pytest".to_owned()].into_iter().chain(rest).collect();
                     }
-                }
-                if let Some(venv) = python.as_deref().and_then(venv_of)
-                    && !c.env.contains_key("VIRTUAL_ENV")
-                {
-                    c.env.insert("VIRTUAL_ENV".into(), venv.to_string_lossy().into_owned());
-                    path_dirs.push(venv.join(bin_dir()));
                 }
             }
             "npm" => {

@@ -105,6 +105,7 @@ pub async fn start(host: &Host, window: &str, config: RunConfig, on_output: Emit
     } else {
         ide_sdk::apply::resolve_run_command(&mut config, root, &settings);
     }
+    ide_sdk::apply::activate_venv(&mut config, root, &settings);
     if config.kind == "go" {
         ide_sdk::apply::apply_to_run_configs(std::slice::from_mut(&mut config), root, &settings);
         ide_sdk::go::apply_to_run(&mut config, &settings.languages.go.build_tags);

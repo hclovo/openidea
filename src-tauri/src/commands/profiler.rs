@@ -13,10 +13,11 @@ use tauri::{State, Window};
 pub async fn profiler_prepare(
     window: Window,
     state: State<'_, AppState>,
-    config: RunConfig,
+    mut config: RunConfig,
 ) -> IdeResult<ProfilePrepared> {
     let project = state.project(window.label())?;
     let (root, cache) = (project.root.clone(), project.cache_dir.join("profiles"));
+    ide_sdk::apply::activate_venv(&mut config, &root, &project.settings.effective());
     blocking(move || {
         let out = ide_run::wrap::new_output_dir(&cache, KEEP_RUNS)?;
         Ok(ide_profiler::prepare(&root, &config, &out))
