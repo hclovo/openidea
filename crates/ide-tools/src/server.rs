@@ -19,6 +19,12 @@ pub fn asset_name(os: &str, arch: &str) -> String {
     format!("openidea-server-{os}-{arch}.gz")
 }
 
+/// Release asset `name` of `version`: this fork tags its releases `d<version>`
+/// (`d0.1.33`), apart from upstream's `v<version>`.
+fn release_url(version: &str, name: &str) -> String {
+    format!("{RELEASES}/d{version}/{name}")
+}
+
 /// Where a downloaded server of `version` is kept: per release source, so a
 /// server of the same version from another repository (an app installed before
 /// from upstream's releases) is never taken for this build's.
@@ -49,7 +55,7 @@ pub fn fetch(
         return Err(IdeError::unavailable(format!("remote development does not support {os}-{arch} hosts")));
     }
     let name = asset_name(os, arch);
-    let url = format!("{RELEASES}/v{version}/{name}");
+    let url = release_url(version, &name);
     let dir = dest.parent().expect("cached path has a parent");
     std::fs::create_dir_all(dir)?;
     let staging = tempfile_dir(dir)?;
@@ -100,6 +106,10 @@ mod tests {
     #[test]
     fn names_and_cache_layout() {
         assert_eq!(asset_name("linux", "x86_64"), "openidea-server-linux-x86_64.gz");
+        assert_eq!(
+            release_url("1.2.3", "openidea-server-linux-x86_64.gz"),
+            "https://github.com/hclovo/openidea/releases/download/d1.2.3/openidea-server-linux-x86_64.gz"
+        );
         let p = cached_path(Path::new("/data"), "1.2.3", "linux", "aarch64");
         assert_eq!(p, Path::new("/data/server/1.2.3/hclovo-openidea/linux-aarch64/openidea-server"));
     }

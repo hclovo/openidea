@@ -33,7 +33,8 @@ development: port forwarding (the Ports tool window), the remote host's CPU, mem
 and disk in the status bar, opening more folders of a host in this or a new window,
 and the hosts of `~/.ssh/config` listed without setting them up. Its
 [releases](https://github.com/hclovo/openidea/releases/latest) ship the macOS and
-Linux apps and the `openidea-server` builds the app installs on remote hosts.
+Linux apps and the `openidea-server` builds the app installs on remote hosts. They are
+tagged `d<version>` (for example `d0.1.33`), apart from upstream's `v<version>` tags.
 
 The macOS app is not signed. After copying it to Applications, run this once before
 opening it:

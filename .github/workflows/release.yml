@@ -1,11 +1,12 @@
 name: Release
 on:
   push:
-    tags: ["v*"]
+    # This fork tags its releases d<version> (d0.1.33), apart from upstream's v<version>.
+    tags: ["d*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v0.1.0); must already exist"
+        description: "Tag to release (e.g. d0.1.33); must already exist"
         required: true
 
 permissions:
@@ -30,7 +31,7 @@ jobs:
         with: { ref: "${{ env.TAG }}" }
       - name: Tag matches app version
         run: |
-          app="v$(jq -r .version src-tauri/tauri.conf.json)"
+          app="d$(jq -r .version src-tauri/tauri.conf.json)"
           if [ "$app" != "$TAG" ]; then
             echo "::error::tag $TAG does not match tauri.conf.json version $app"
             exit 1
@@ -227,7 +228,7 @@ jobs:
               core.setFailed(`latest.json would miss ${missing.join(", ")}`);
               return;
             }
-            const manifest = { version: tag.replace(/^v/, ""), notes: "", pub_date: new Date().toISOString(), platforms };
+            const manifest = { version: tag.replace(/^[dv]/, ""), notes: "", pub_date: new Date().toISOString(), platforms };
             const old = assets.find((a) => a.name === "latest.json");
             if (old) await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: old.id });
             await github.rest.repos.uploadReleaseAsset({
