@@ -1,8 +1,16 @@
 /** Three-pane merge conflict editor: Yours | Result | Theirs. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { RangeSetBuilder, StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
-import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
+import {
+  Prec,
+  RangeSet,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+} from "@codemirror/state";
+import { Decoration, EditorView, GutterMarker, WidgetType, gutter, type DecorationSet } from "@codemirror/view";
 import { history, historyKeymap } from "@codemirror/commands";
 import { keymap } from "@codemirror/view";
 import { unifiedMergeView } from "@codemirror/merge";
@@ -15,7 +23,16 @@ import { editorService, type EditorInput } from "@/workbench/contributions";
 import { blameSlot, toggleAnnotations } from "./blame";
 import { languageFor, viewerBase } from "./cm";
 import { confirmDialog } from "./dialogs";
-import { initialResult, mergeTitles, resolutionText, type Resolution, type ResultConflict } from "./conflicts";
+import {
+  chunkTarget,
+  initialResult,
+  mergeTitles,
+  resolutionText,
+  sideChunks,
+  type Resolution,
+  type ResultConflict,
+  type SideChunk,
+} from "./conflicts";
 import { baseName } from "./model";
 import { errorMessage, readWorkingText, runOp, writeFileText } from "./ops";
 import { refreshNow } from "./store";
@@ -135,6 +152,90 @@ const resultTheme = EditorView.baseTheme({
   ".cm-conflict-actions button:hover": { color: "var(--fg-strong)", background: "var(--bg-control-hover)" },
 });
 
+type ChunkState = ReturnType<typeof chunkTarget>["state"];
+
+/** Where each change of a side pane stands in the result, recomputed as the result changes. */
+const setChunkStates = StateEffect.define<readonly ChunkState[]>();
+
+class ApplyMarker extends GutterMarker {
+  constructor(
+    readonly index: number,
+    readonly arrow: string,
+    readonly append: boolean,
+  ) {
+    super();
+  }
+  override eq(o: ApplyMarker) {
+    return o.index === this.index && o.arrow === this.arrow && o.append === this.append;
+  }
+  override toDOM() {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cm-mergeApply";
+    b.dataset.chunk = String(this.index);
+    b.textContent = this.arrow;
+    b.title = this.append ? tx("Append to the result") : tx("Apply to the result");
+    return b;
+  }
+}
+
+/**
+ * IDEA's `>>` / `<<` beside the changes of a side pane, on the edge next to the result:
+ * each applies one change to the result, until the result has it.
+ */
+function applyGutter(chunks: readonly SideChunk[], arrow: "»" | "«", onApply: (index: number) => void): Extension {
+  const markers = StateField.define<RangeSet<GutterMarker>>({
+    create: () => RangeSet.empty,
+    update(value, tr) {
+      const states = tr.effects.findLast((e) => e.is(setChunkStates))?.value as readonly ChunkState[] | undefined;
+      if (!states) return value;
+      const b = new RangeSetBuilder<GutterMarker>();
+      chunks.forEach((c, i) => {
+        const state = states[i];
+        if (!state || state === "applied") return;
+        const line = tr.state.doc.lineAt(c.fromB).from;
+        b.add(line, line, new ApplyMarker(i, arrow, state === "modified"));
+      });
+      return b.finish();
+    },
+  });
+  return [
+    markers,
+    Prec.highest(
+      gutter({
+        class: "cm-mergeApplyGutter",
+        side: arrow === "»" ? "after" : "before",
+        markers: (view) => view.state.field(markers),
+        domEventHandlers: {
+          mousedown(_view, _line, event) {
+            const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-chunk]");
+            if (!target || (event as MouseEvent).button !== 0) return false;
+            event.preventDefault();
+            onApply(Number(target.dataset.chunk));
+            return true;
+          },
+        },
+      }),
+    ),
+  ];
+}
+
+const applyTheme = EditorView.baseTheme({
+  ".cm-mergeApplyGutter .cm-gutterElement": { display: "flex", alignItems: "center", justifyContent: "center" },
+  ".cm-mergeApply": {
+    width: "18px",
+    padding: "0",
+    border: "none",
+    borderRadius: "var(--radius-small)",
+    color: "var(--fg-secondary)",
+    background: "transparent",
+    font: "inherit",
+    lineHeight: "inherit",
+    cursor: "pointer",
+  },
+  ".cm-mergeApply:hover": { color: "var(--fg-strong)", background: "var(--bg-control-hover)" },
+});
+
 export function MergeEditor({ input }: { input: EditorInput }) {
   const { path } = input.data as MergeData;
   const [state, setState] = useState<{
@@ -188,14 +289,54 @@ export function MergeEditor({ input }: { input: EditorInput }) {
 
   useEffect(() => {
     if (!state || lang === null || !oursRef.current || !resultRef.current || !theirsRef.current) return;
-    const side = () => [
+    // Each side's changes against the base can be applied to the result (none without a base).
+    const base = state.base;
+    const chunks = {
+      ours: base === null ? [] : sideChunks(base, state.ours),
+      theirs: base === null ? [] : sideChunks(base, state.theirs),
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refreshChunks = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (base === null) return;
+      const text = result.state.doc.toString();
+      const changes = sideChunks(base, text);
+      const states = (which: "ours" | "theirs") =>
+        setChunkStates.of(chunks[which].map((c) => chunkTarget(base, state[which], text, c, changes).state));
+      ours.dispatch({ effects: states("ours") });
+      theirs.dispatch({ effects: states("theirs") });
+    };
+    const applyFrom = (which: "ours" | "theirs") => (index: number) => {
+      const view = resultView.current;
+      const chunk = chunks[which][index];
+      if (!view || !chunk || base === null) return;
+      const t = chunkTarget(base, state[which], view.state.doc.toString(), chunk);
+      if (t.state === "applied") return;
+      // Conflicts the change lands on are resolved by it.
+      const point = t.from === t.to;
+      const covered = view.state
+        .field(conflictField)
+        .conflicts.flatMap((c, i) =>
+          (point || c.from === c.to ? c.from <= t.to && c.to >= t.from : c.from < t.to && c.to > t.from) ? [i] : [],
+        );
+      view.dispatch({
+        changes: { from: t.from, to: t.to, insert: t.insert },
+        effects: covered.map((i) => resolvedConflict.of(i)),
+        userEvent: "input.resolve",
+      });
+      refreshChunks();
+    };
+    const side = (which: "ours" | "theirs") => [
       viewerBase({ readOnly: true }),
       lang,
       blameSlot(),
-      state.base !== null ? unifiedMergeView({ original: state.base, mergeControls: false, gutter: true }) : [],
+      base !== null ? unifiedMergeView({ original: base, mergeControls: false, gutter: true }) : [],
+      applyGutter(chunks[which], which === "ours" ? "»" : "«", applyFrom(which)),
+      applyTheme,
     ];
-    const ours = new EditorView({ doc: state.ours, parent: oursRef.current, extensions: side() });
-    const theirs = new EditorView({ doc: state.theirs, parent: theirsRef.current, extensions: side() });
+    const ours = new EditorView({ doc: state.ours, parent: oursRef.current, extensions: side("ours") });
+    const theirs = new EditorView({ doc: state.theirs, parent: theirsRef.current, extensions: side("theirs") });
     // Like IDEA, start from the three-way merge (non-conflicting changes applied, conflicts
     // showing the base) rather than the marker-laden working copy.
     const start =
@@ -212,12 +353,16 @@ export function MergeEditor({ input }: { input: EditorInput }) {
         conflictField.init((s) => ({ conflicts: start.conflicts, deco: decorate(s, start.conflicts) })),
         resultTheme,
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) setLeft(u.state.field(conflictField).conflicts.length);
+          if (!u.docChanged) return;
+          setLeft(u.state.field(conflictField).conflicts.length);
+          clearTimeout(timer);
+          timer = setTimeout(refreshChunks, 150);
         }),
       ],
     });
     resultView.current = result;
     setLeft(result.state.field(conflictField).conflicts.length);
+    refreshChunks();
     oursView.current = ours;
     theirsView.current = theirs;
     // Scroll the three panes together (by scroll ratio), like IDEA's merge view.
@@ -241,6 +386,7 @@ export function MergeEditor({ input }: { input: EditorInput }) {
       return () => v.scrollDOM.removeEventListener("scroll", h);
     });
     return () => {
+      clearTimeout(timer);
       offs.forEach((off) => off());
       ours.destroy();
       theirs.destroy();

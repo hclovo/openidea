@@ -1,4 +1,6 @@
 /** Git conflict marker parsing and resolution (pure). */
+import { Text } from "@codemirror/state";
+import { Chunk } from "@codemirror/merge";
 import type { MergeSides } from "@/bindings";
 
 export interface ConflictBlock {
@@ -189,4 +191,72 @@ export function initialResult(merged: string, reversed = false): { text: string;
     pos = b.to;
   }
   return { text: text + merged.slice(pos), conflicts };
+}
+
+/** A change of one side against the base, as offsets in the base (`A`) and in that side (`B`). */
+export interface SideChunk {
+  fromA: number;
+  toA: number;
+  fromB: number;
+  toB: number;
+}
+
+const textOf = (s: string) => Text.of(s.split("\n"));
+
+/** Line chunks of `b` against `a`, with offsets clamped into the documents. */
+function lineChunks(a: string, b: string): SideChunk[] {
+  return Chunk.build(textOf(a), textOf(b)).map((c) => ({
+    fromA: Math.min(c.fromA, a.length),
+    toA: Math.min(c.toA, a.length),
+    fromB: Math.min(c.fromB, b.length),
+    toB: Math.min(c.toB, b.length),
+  }));
+}
+
+/** The changes a side pane of the merge editor shows (and can apply), against the base. */
+export function sideChunks(base: string, side: string): SideChunk[] {
+  return lineChunks(base, side);
+}
+
+/**
+ * The result text standing for base `fromA`–`toA`, given the result's changes against the
+ * base: those overlapping the range join it. An insertion (an empty range) also takes the
+ * changes touching it, which hold it once merged next to another change.
+ */
+function resultRange(changes: readonly SideChunk[], fromA: number, toA: number): [number, number] {
+  const insertion = fromA === toA;
+  let delta = 0;
+  let from = -1;
+  let to = -1;
+  for (const c of changes) {
+    const joins = insertion ? c.fromA <= toA && c.toA >= fromA : c.fromA < toA && c.toA > fromA;
+    if (!joins && c.fromA >= toA) break;
+    if (joins && from < 0) from = Math.min(fromA + delta, c.fromB);
+    delta += c.toB - c.fromB - (c.toA - c.fromA);
+    if (joins) to = Math.max(toA + delta, c.toB);
+  }
+  return from < 0 ? [fromA + delta, toA + delta] : [from, to];
+}
+
+/**
+ * Where a side's `chunk` stands in the result, and what applying it does (IDEA's `>>` /
+ * `<<`): `pending` while the result still holds the base text there (applying replaces
+ * it), `applied` once the result has the side's text, `modified` when the result holds
+ * something else (the other side's change: applying appends, so both are kept).
+ */
+export function chunkTarget(
+  base: string,
+  side: string,
+  result: string,
+  chunk: SideChunk,
+  /** The result's changes against the base (`sideChunks(base, result)`), when already known. */
+  changes: readonly SideChunk[] = lineChunks(base, result),
+): { state: "pending" | "applied" | "modified"; from: number; to: number; insert: string } {
+  const [from, to] = resultRange(changes, chunk.fromA, chunk.toA);
+  const now = result.slice(from, to);
+  const text = side.slice(chunk.fromB, chunk.toB);
+  if (text ? now.includes(text) : now === "") return { state: "applied", from, to, insert: text };
+  if (now === base.slice(chunk.fromA, chunk.toA) || !text) return { state: "pending", from, to, insert: text };
+  const insert = now && !now.endsWith("\n") ? `\n${text}` : text;
+  return { state: "modified", from: to, to, insert };
 }

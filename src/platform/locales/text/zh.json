@@ -4877,6 +4877,8 @@
   "Project host ({remoteHost})": "项目主机（{remoteHost}）",
   "Runs on the remote host, where the project is.": "在项目所在的远程主机上运行。",
   "e.g. python3 main.py --port 8000": "例如 python3 main.py --port 8000",
+  "Apply to the result": "应用到结果",
+  "Append to the result": "追加到结果",
   "Monospaced": "等宽",
   "Proportional": "非等宽",
   "Loading system fonts…": "正在加载系统字体…",
