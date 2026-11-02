@@ -181,6 +181,24 @@ pub fn aliases(text: &str) -> Vec<String> {
     out
 }
 
+/// Whether `alias` has `ForwardAgent yes` in `text` (as [`read`] returns it): the first value
+/// of a `Host` block matching it wins, as in OpenSSH (`!` patterns exclude, `Match` never matches).
+pub fn forward_agent(text: &str, alias: &str) -> bool {
+    let mut matches = false;
+    for line in text.lines() {
+        let Some((key, value)) = split_directive(line) else { continue };
+        if key.eq_ignore_ascii_case("host") {
+            let patterns = words(value);
+            let excluded = patterns.iter().any(|p| p.strip_prefix('!').is_some_and(|p| wildcard(p, alias)));
+            matches = !excluded && patterns.iter().any(|p| !p.starts_with('!') && wildcard(p, alias));
+        } else if matches && key.eq_ignore_ascii_case("forwardagent") {
+            // `yes`, or an agent socket path / `$VAR`: forwarding either way.
+            return !matches!(value.to_ascii_lowercase().as_str(), "no" | "false");
+        }
+    }
+    false
+}
+
 /// The hosts of the config file at `path`, with where each leads.
 pub fn hosts(path: &Path) -> Vec<SshConfigHost> {
     let Some(text) = read(path) else { return Vec::new() };
@@ -203,6 +221,17 @@ pub fn hosts(path: &Path) -> Vec<SshConfigHost> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn forward_agent_takes_the_first_matching_value() {
+        let text = "Host *\n  ServerAliveInterval 30\nHost dev4\n  HostName 43.0.0.1\n  ForwardAgent yes\n\
+                    Host dev* !dev9\n  ForwardAgent no\nHost *\n  ForwardAgent no\n";
+        assert!(forward_agent(text, "dev4"));
+        assert!(!forward_agent(text, "dev5"));
+        assert!(!forward_agent(text, "dev9"));
+        assert!(!forward_agent("Host x\n  User me\n", "x"));
+        assert!(forward_agent("Host *\n  ForwardAgent=yes\n", "anything"));
+    }
+
     use super::*;
 
     #[test]

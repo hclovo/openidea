@@ -38,6 +38,8 @@ pub struct SshConfiguration {
     pub key_file: String,
     /// Keep the password / key passphrase in the saved passwords.
     pub save_secret: bool,
+    /// Forward this machine's SSH agent (`ssh -A`): git and ssh on the host use its keys.
+    pub forward_agent: bool,
 }
 
 impl SshConfiguration {

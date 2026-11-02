@@ -15,11 +15,21 @@ pub struct SshTarget {
     pub auth: SshAuth,
     /// Private key for [`SshAuth::KeyPair`]; `~/` is the home directory.
     pub key_file: String,
+    /// Forward this machine's SSH agent to the remote-development server (`~/.ssh/config`
+    /// hosts also by their `ForwardAgent`).
+    pub forward_agent: bool,
 }
 
 impl From<&SshConfiguration> for SshTarget {
     fn from(c: &SshConfiguration) -> Self {
-        Self { host: c.host.clone(), port: c.port, user: c.user.clone(), auth: c.auth, key_file: c.key_file.clone() }
+        Self {
+            host: c.host.clone(),
+            port: c.port,
+            user: c.user.clone(),
+            auth: c.auth,
+            key_file: c.key_file.clone(),
+            forward_agent: c.forward_agent,
+        }
     }
 }
 
@@ -44,6 +54,8 @@ pub(crate) struct Hop {
     pub port: u16,
     pub user: String,
     pub identity_files: Vec<PathBuf>,
+    /// `ForwardAgent yes` in `~/.ssh/config`.
+    pub forward_agent: bool,
 }
 
 impl Hop {
@@ -70,12 +82,14 @@ fn local_user() -> String {
 
 /// One `~/.ssh/config` lookup, includes followed (a missing or unreadable file means defaults).
 fn config_hop(config: Option<&Path>, alias: &str) -> (Hop, Option<String>) {
-    let c = config
-        .and_then(crate::ssh_config::read)
-        .and_then(|text| russh_config::parse(&text, alias).ok())
+    let text = config.and_then(crate::ssh_config::read);
+    let c = text
+        .as_deref()
+        .and_then(|text| russh_config::parse(text, alias).ok())
         .unwrap_or_else(|| russh_config::Config::default(alias));
     let identity_files = c.host_config.identity_file.clone().unwrap_or_default();
-    let hop = Hop { host: c.host().to_owned(), port: c.port(), user: c.user(), identity_files };
+    let forward_agent = text.as_deref().is_some_and(|t| crate::ssh_config::forward_agent(t, alias));
+    let hop = Hop { host: c.host().to_owned(), port: c.port(), user: c.user(), identity_files, forward_agent };
     (hop, c.host_config.proxy_jump.clone())
 }
 
@@ -108,7 +122,16 @@ pub(crate) fn resolve_hops(target: &SshTarget, config: Option<&Path>) -> IdeResu
     let (mut hop, proxy_jump) = if target.auth == SshAuth::OpenSsh {
         config_hop(config, host)
     } else {
-        (Hop { host: host.to_owned(), port: 22, user: local_user(), identity_files: Vec::new() }, None)
+        (
+            Hop {
+                host: host.to_owned(),
+                port: 22,
+                user: local_user(),
+                identity_files: Vec::new(),
+                forward_agent: false,
+            },
+            None,
+        )
     };
     if let Some(p) = target.port {
         hop.port = p;

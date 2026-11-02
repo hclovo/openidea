@@ -109,6 +109,8 @@ pub struct Session {
     /// Sessions of the `ProxyJump` hosts, kept alive under `handle`.
     _jumps: Vec<Handle<Client>>,
     label: String,
+    /// The local SSH agent is forwarded to the remote-development server ([`Session::exec_stream`]).
+    forward_agent: bool,
 }
 
 impl Session {
@@ -129,17 +131,20 @@ impl Session {
         files: &SshFiles,
     ) -> Result<Session, ConnectError> {
         let hops = resolve_hops(target, files.config.as_deref())?;
+        let forward_agent = target.forward_agent || hops.last().is_some_and(|h| h.forward_agent);
         let mut sessions: Vec<Handle<Client>> = Vec::new();
         for (i, hop) in hops.iter().enumerate() {
             let last = i == hops.len() - 1;
+            // Only the target answers agent channels, and only when forwarding is on.
+            let agent = last && forward_agent;
             let mut handle = match sessions.last() {
-                None => connect::<tokio::net::TcpStream>(hop, &files.known_hosts, None).await?,
+                None => connect::<tokio::net::TcpStream>(hop, &files.known_hosts, None, agent).await?,
                 Some(prev) => {
                     let channel = prev
                         .channel_open_direct_tcpip(hop.host.as_str(), u32::from(hop.port), "127.0.0.1", 0)
                         .await
                         .map_err(|e| io(format!("cannot reach {} through the jump host: {e}", hop.label())))?;
-                    connect(hop, &files.known_hosts, Some(channel.into_stream())).await?
+                    connect(hop, &files.known_hosts, Some(channel.into_stream()), agent).await?
                 }
             };
             // Jump hosts always use the agent / identity files; the secret belongs to the target.
@@ -149,7 +154,7 @@ impl Session {
         }
         let handle = sessions.pop().expect("at least one hop");
         let label = hops.last().expect("at least one hop").label();
-        Ok(Session { handle, _jumps: sessions, label })
+        Ok(Session { handle, _jumps: sessions, label, forward_agent })
     }
 
     /// `user@host:port` of the target.
@@ -169,8 +174,15 @@ impl Session {
     }
 
     /// Starts `command` and returns its stdin / stdout as one byte stream (stderr is dropped).
+    /// With agent forwarding on, the command gets `SSH_AUTH_SOCK` (the remote-development
+    /// server, so its terminals, git and runs use this machine's keys).
     pub async fn exec_stream(&self, command: &str) -> Result<ChannelStream<Msg>, russh::Error> {
         let channel = self.handle.channel_open_session().await?;
+        if self.forward_agent
+            && let Err(e) = channel.agent_forward(false).await
+        {
+            tracing::warn!("SSH agent forwarding to {}: {e}", self.label);
+        }
         channel.exec(true, command).await?;
         Ok(channel.into_stream())
     }
@@ -357,6 +369,8 @@ pub struct Client {
     port: u16,
     known_hosts: PathBuf,
     issue: Arc<Mutex<Option<HostKeyIssue>>>,
+    /// Agent channels the host opens reach the local SSH agent (else they are refused).
+    forward_agent: bool,
 }
 
 impl client::Handler for Client {
@@ -375,9 +389,52 @@ impl client::Handler for Client {
         *self.issue.lock() = Some(issue);
         Ok(false)
     }
+
+    /// A program on the host asks this machine's agent (git, ssh): relayed only when
+    /// forwarding was asked for, so a host can't use the agent uninvited.
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<Msg>,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if !self.forward_agent {
+            return Ok(()); // Dropping `reply` refuses the channel.
+        }
+        let agent = match local_agent().await {
+            Ok(agent) => agent,
+            Err(e) => {
+                tracing::warn!("SSH agent forwarding: no local agent ({e})");
+                return Ok(());
+            }
+        };
+        reply.accept().await;
+        tokio::spawn(async move {
+            let (mut remote, mut agent) = (channel.into_stream(), agent);
+            let _ = tokio::io::copy_bidirectional(&mut remote, &mut agent).await;
+        });
+        Ok(())
+    }
 }
 
-async fn connect<S>(hop: &Hop, known_hosts: &Path, stream: Option<S>) -> Result<Handle<Client>, ConnectError>
+/// A connection to the local SSH agent (`SSH_AUTH_SOCK`; Windows' OpenSSH agent pipe).
+#[cfg(unix)]
+async fn local_agent() -> std::io::Result<tokio::net::UnixStream> {
+    let socket = std::env::var_os("SSH_AUTH_SOCK").ok_or_else(|| std::io::Error::other("SSH_AUTH_SOCK is not set"))?;
+    tokio::net::UnixStream::connect(socket).await
+}
+
+#[cfg(windows)]
+async fn local_agent() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    tokio::net::windows::named_pipe::ClientOptions::new().open(r"\\.\pipe\openssh-ssh-agent")
+}
+
+async fn connect<S>(
+    hop: &Hop,
+    known_hosts: &Path,
+    stream: Option<S>,
+    forward_agent: bool,
+) -> Result<Handle<Client>, ConnectError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -389,8 +446,13 @@ where
         ..Default::default()
     });
     let issue = Arc::new(Mutex::new(None));
-    let handler =
-        Client { host: hop.host.clone(), port: hop.port, known_hosts: known_hosts.to_owned(), issue: issue.clone() };
+    let handler = Client {
+        host: hop.host.clone(),
+        port: hop.port,
+        known_hosts: known_hosts.to_owned(),
+        issue: issue.clone(),
+        forward_agent,
+    };
     let result = match stream {
         None => client::connect(config, (hop.host.as_str(), hop.port), handler).await,
         Some(s) => client::connect_stream(config, s, handler).await,

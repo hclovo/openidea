@@ -5959,6 +5959,8 @@ export type SshConfiguration = {
 	keyFile?: string,
 	/**  Keep the password / key passphrase in the saved passwords. */
 	saveSecret?: boolean,
+	/**  Forward this machine's SSH agent (`ssh -A`): git and ssh on the host use its keys. */
+	forwardAgent?: boolean,
 };
 
 /**  Tools › SSH Configurations. */

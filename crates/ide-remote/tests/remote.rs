@@ -33,6 +33,7 @@ async fn env() -> Env {
         user: "dev".into(),
         auth: SshAuth::Password,
         key_file: String::new(),
+        forward_agent: false,
     };
     let session = match Session::connect(&target, Some("secret"), &files).await {
         Err(ide_ssh::ConnectError::UnknownHostKey(k)) => {

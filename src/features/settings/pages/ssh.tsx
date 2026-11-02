@@ -269,15 +269,24 @@ function SshConfigForm({
       {config.auth === "openSsh" ? (
         <div className={styles.note}>
           <T>
-            {"Uses HostName, User, Port, IdentityFile and ProxyJump from ~/.ssh/config, and keys of the SSH agent."}
+            {
+              "Uses HostName, User, Port, IdentityFile, ProxyJump and ForwardAgent from ~/.ssh/config, and keys of the SSH agent."
+            }
           </T>
         </div>
       ) : (
-        <Checkbox
-          checked={config.saveSecret}
-          onChange={(saveSecret) => update({ saveSecret })}
-          label={config.auth === "password" ? "Save password" : "Save passphrase"}
-        />
+        <>
+          <Checkbox
+            checked={config.saveSecret}
+            onChange={(saveSecret) => update({ saveSecret })}
+            label={config.auth === "password" ? "Save password" : "Save passphrase"}
+          />
+          <Checkbox
+            checked={config.forwardAgent}
+            onChange={(forwardAgent) => update({ forwardAgent })}
+            label="Forward SSH agent (remote development: git and ssh on the host use this machine's keys)"
+          />
+        </>
       )}
       <TestConnection config={config} secret={secret} focusSecret={() => secretInput.current?.focus()} />
     </Section>

@@ -14,6 +14,8 @@ export interface SshConfigValid {
   auth: SshAuthValid;
   keyFile: string;
   saveSecret: boolean;
+  /** Forward this machine's SSH agent to the remote-development server (`ssh -A`). */
+  forwardAgent: boolean;
 }
 
 export interface DeploymentMappingValid {
@@ -68,6 +70,7 @@ export const DEFAULT_SSH_CONFIG: SshConfigValid = {
   auth: "openSsh",
   keyFile: "",
   saveSecret: false,
+  forwardAgent: false,
 };
 
 export const DEFAULT_DEPLOYMENT_SERVER: DeploymentServerValid = {
@@ -144,6 +147,7 @@ export function validateSshConfigs(raw: unknown): SshConfigValid[] {
     auth: oneOf(o.auth, ["password", "keyPair", "openSsh"] as const, d.auth),
     keyFile: text(o.keyFile, ""),
     saveSecret: bool(o.saveSecret, d.saveSecret),
+    forwardAgent: bool(o.forwardAgent, d.forwardAgent),
   }));
 }
 
