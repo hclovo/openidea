@@ -18,6 +18,8 @@ import {
 } from "./jvmTypes";
 import { tx } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
+import { isRemoteWindow } from "@/platform/remote";
+import { pythonInterpreters } from "./pythonInterpreters";
 
 import { tomcatType } from "./tomcat";
 import { goBuildType, goTestType } from "./goTypes";
@@ -390,6 +392,109 @@ const pytest: RunConfigTypeContribution = {
   },
 };
 
+/** Interpreter options that take their value as the next argument (`-X dev`, `-W error`). */
+const PYTHON_VALUE_OPTIONS = new Set(["-X", "-W", "--check-hash-based-pycs"]);
+/** Commands that run Python in the project's environment (`uv run python …`), as the backend knows them. */
+const PYTHON_RUNNERS = new Set(["uv", "poetry", "pdm"]);
+const isPythonCommand = (command: string) => /^python(3(\.\d+)?)?$/.test(commandName(command));
+/** An interpreter the form shows as one: `python3.12`, `.venv/bin/python`, `pypy3`, Windows' `py`. */
+const isInterpreter = (command: string) => /^(python|pypy)|^py$/i.test(commandName(command));
+/** Remote hosts are Linux or macOS; only a local Windows machine splits paths there. */
+const windowsHost = () => isWindows() && !isRemoteWindow();
+const splitPython = (text: string | undefined) => parseArgs(text ?? "", windowsHost());
+
+/** The form of a Python command line; null when it runs no script or module (`-c` code, stdin, the REPL). */
+function pythonParams(c: RunConfig): Record<string, string> | null {
+  if (c.kind !== "python") return null;
+  const args = [...c.args];
+  const interpreter = [c.command];
+  if (PYTHON_RUNNERS.has(commandName(c.command)) && args[0] === "run") {
+    interpreter.push(args.shift()!);
+    if (args[0] && isPythonCommand(args[0])) interpreter.push(args.shift()!);
+  } else if (!isInterpreter(c.command)) return null;
+  const options: string[] = [];
+  while (args[0]?.startsWith("-") && args[0] !== "-m") {
+    const option = args.shift()!;
+    if (option === "-c" || option === "-") return null;
+    options.push(option);
+    if (PYTHON_VALUE_OPTIONS.has(option) && args.length) options.push(args.shift()!);
+  }
+  const module = args[0] === "-m";
+  if (module) args.shift();
+  const target = args.shift();
+  if (!target) return null;
+  return {
+    interpreter: formatArgs(interpreter),
+    mode: module ? "module" : "script",
+    ...(module ? { module: target } : { script: target }),
+    parameters: formatArgs(args),
+    options: formatArgs(options),
+  };
+}
+
+/**
+ * Python (PyCharm's Python configuration): a script, or a module run with `-m`.
+ * An empty interpreter runs `python3`, which the backend points at the project
+ * interpreter (the one chosen in settings, else the project's virtualenv); the
+ * interpreter may carry a runner (`uv run python`). In a remote window all of it
+ * is on the remote host.
+ */
+const python: RunConfigTypeContribution = {
+  id: "python",
+  label: "Python",
+  icon: "file-python",
+  description: "Run a Python script or module",
+  defaults: { mode: "script" },
+  debugAdapter: "debugpy",
+  fields: [
+    {
+      key: "interpreter",
+      label: "Python interpreter",
+      mono: true,
+      placeholder: "Project interpreter",
+      hint: "Empty uses the project interpreter; e.g. .venv/bin/python or uv run python",
+      suggestions: (configs) => [
+        ...new Set([...pythonInterpreters(), ...configs.flatMap((c) => pythonParams(c)?.interpreter ?? [])]),
+      ],
+    },
+    {
+      key: "mode",
+      label: "Execute",
+      control: "select",
+      options: [
+        { value: "script", label: "Script path" },
+        { value: "module", label: "Module name" },
+      ],
+    },
+    {
+      key: "script",
+      label: "Script path",
+      mono: true,
+      required: true,
+      placeholder: "main.py",
+      hint: "Relative to the working directory",
+      visible: (p) => p.mode !== "module",
+    },
+    {
+      key: "module",
+      label: "Module name",
+      mono: true,
+      required: true,
+      placeholder: "package.module",
+      visible: (p) => p.mode === "module",
+      validate: (v) => (/^[A-Za-z_][\w.]*$/.test(v) ? null : "Not a module name"),
+    },
+    { key: "parameters", label: "Script parameters", mono: true },
+    { key: "options", label: "Interpreter options", mono: true, placeholder: "e.g. -X dev -W error" },
+  ],
+  commandLine(p) {
+    const [command = windowsHost() ? "python" : "python3", ...runner] = splitPython(p.interpreter);
+    const target = p.mode === "module" ? ["-m", p.module?.trim() ?? ""] : [p.script?.trim() ?? ""];
+    return { command, args: [...runner, ...splitPython(p.options), ...target, ...splitPython(p.parameters)] };
+  },
+  paramsFrom: pythonParams,
+};
+
 export const BUILTIN_TYPES: readonly RunConfigTypeContribution[] = [
   shell,
   program,
@@ -397,6 +502,7 @@ export const BUILTIN_TYPES: readonly RunConfigTypeContribution[] = [
   gradle,
   maven,
   godot,
+  python,
   pytest,
   dotnetProjectType,
   dotnetTestType,

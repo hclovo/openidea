@@ -9,6 +9,7 @@ import clsx from "clsx";
 import type { BeforeLaunchTask, RunConfig } from "@/platform/ipc";
 import { useWorkflowSettings } from "@/platform/workflowSettings";
 import { useTx, useTxTemplate } from "@/platform/i18n";
+import { useRemote } from "@/platform/remote";
 import {
   Button,
   Checkbox,
@@ -41,7 +42,9 @@ import {
   type ConfigErrors,
 } from "./configs";
 import { EnvDialog } from "./EnvDialog";
+import { usePythonInterpreters } from "./pythonInterpreters";
 import { withTarget } from "./remote";
+import { isWindows } from "./jvmTypes";
 import { COMPOUND, formParams, terminalApplies, withParams } from "./types";
 import { TomcatSettings } from "./TomcatSettings";
 import styles from "./Run.module.css";
@@ -173,11 +176,15 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
   const openByDefault = useWorkflowSettings((s) => s.run.showOnStart);
   const externalTools = useWorkflowSettings((s) => s.externalTools);
   const runTargets = useWorkflowSettings((s) => s.runTargets);
+  const remoteHost = useRemote((s) => s.session?.host ?? null);
+  // The Python form suggests interpreters, detected asynchronously.
+  usePythonInterpreters((s) => s.paths);
   const toolWindows = useContributions((s) => s.toolWindows);
   const tx = useTx();
   const txTemplate = useTxTemplate();
   const [shown, setShown] = useState<ReadonlySet<OptionId>>(() => new Set());
   const [argsText, setArgsText] = useState<string | null>(null);
+  const [lineText, setLineText] = useState<string | null>(null);
   const [envText, setEnvText] = useState<string | null>(null);
   const [envFilesText, setEnvFilesText] = useState<string | null>(null);
   const [envOpen, setEnvOpen] = useState(false);
@@ -290,7 +297,8 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
     });
 
   const targetOptions: SelectOption[] = [
-    { value: "", label: "Local machine" },
+    // A remote window's project, and what runs without a target, is on the remote host.
+    { value: "", label: remoteHost ? txTemplate(`Project host (${remoteHost})`) : "Local machine" },
     ...runTargets.map((t) => ({ value: t.id, label: t.name.trim() || t.id })),
   ];
   if (config.target && !runTargets.some((t) => t.id === config.target))
@@ -341,9 +349,11 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
           hint={
             config.target
               ? "Debugging is not available on run targets."
-              : runTargets.length
-                ? undefined
-                : "Add SSH hosts in Settings › Build, Execution, Deployment › Run Targets."
+              : remoteHost
+                ? "Runs on the remote host, where the project is."
+                : runTargets.length
+                  ? undefined
+                  : "Add SSH hosts in Settings › Build, Execution, Deployment › Run Targets."
           }
         >
           <Select
@@ -618,7 +628,25 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
           <span className={styles.chooserMuted}>
             <T>Command line</T>
           </span>
-          <code>{commandLine(config) || "—"}</code>
+          {config.kind === "shell" && params?.mode === "text" ? (
+            <code>{commandLine(config) || "—"}</code>
+          ) : (
+            // The whole command line, typed at once; the form above follows when it can express it.
+            <Input
+              mono
+              aria-label="Command line"
+              value={lineText ?? formatArgs([config.command, ...config.args].filter((a, i) => i > 0 || a))}
+              placeholder="e.g. python3 main.py --port 8000"
+              onChange={(e) => {
+                setLineText(e.target.value);
+                const [command = "", ...args] = parseArgs(e.target.value, !remoteHost && isWindows());
+                const plain: RunConfig = { ...config, command, args, params: {} };
+                const derived = type ? formParams({ ...plain, params: undefined }, type) : null;
+                onChange(derived ? withParams(plain, derived, type) : plain);
+              }}
+              onBlur={() => setLineText(null)}
+            />
+          )}
         </div>
       )}
 

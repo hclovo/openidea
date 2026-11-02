@@ -10,6 +10,7 @@ import { create } from "zustand";
 import { executeAction } from "@/platform/actions";
 import { usePlatform } from "@/platform/platformInfo";
 import { useProject } from "@/platform/project";
+import { isRemoteWindow } from "@/platform/remote";
 import { Icon, Input, List, Popup, T, listNavigate } from "@/ui";
 import { runAnythingProviderList } from "@/workbench/contributions";
 import { buildRows, clearHistory, pushHistory, readHistory, shellRunConfig, type Row } from "./model";
@@ -33,7 +34,9 @@ export async function runCommandLine(line: string): Promise<void> {
       console.error(`run anything provider ${p.id} failed`, e);
     }
   }
-  await executeAction("run.runConfig", shellRunConfig(text, root, usePlatform.getState().os === "windows"));
+  // A remote window runs it on the remote host (Linux or macOS), whatever this machine is.
+  const windows = usePlatform.getState().os === "windows" && !isRemoteWindow();
+  await executeAction("run.runConfig", shellRunConfig(text, root, windows));
 }
 
 export function RunAnythingHost() {

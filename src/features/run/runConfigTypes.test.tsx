@@ -1,6 +1,6 @@
 import { useProject } from "@/platform/project";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { registerActions } from "@/platform/actions";
 import { setContext } from "@/platform/context";
 import type { RunConfig } from "@/platform/ipc";
@@ -253,6 +253,133 @@ describe("configuration types", () => {
     expect(pytest.paramsFrom!(cfg("pytest", { kind: "pytest", command: "tox", args: [] }))).toBeNull();
   });
 
+  it("python round-trips scripts, modules, runners and options, and opens run-file configs in its form", () => {
+    const python = typeFor("python")!;
+    const fresh = newConfigOfType(python, []);
+    expect(fresh).toMatchObject({
+      kind: "python",
+      command: "python3",
+      debugAdapter: "debugpy",
+      params: { mode: "script" },
+    });
+    expect(missingParams(fresh)).toEqual({ script: "Script path is required" });
+
+    const cases: Array<{ command: string; args: string[]; params: Record<string, string> }> = [
+      {
+        command: "python3",
+        args: ["main.py"],
+        params: { interpreter: "python3", mode: "script", script: "main.py", parameters: "", options: "" },
+      },
+      {
+        command: ".venv/bin/python",
+        args: ["-u", "-X", "dev", "manage.py", "runserver", "0.0.0.0:8000"],
+        params: {
+          interpreter: ".venv/bin/python",
+          mode: "script",
+          script: "manage.py",
+          parameters: "runserver 0.0.0.0:8000",
+          options: "-u -X dev",
+        },
+      },
+      {
+        command: "uv",
+        args: ["run", "python", "-m", "app.cli", "--verbose"],
+        params: {
+          interpreter: "uv run python",
+          mode: "module",
+          module: "app.cli",
+          parameters: "--verbose",
+          options: "",
+        },
+      },
+      {
+        command: "poetry",
+        args: ["run", "main.py"],
+        params: { interpreter: "poetry run", mode: "script", script: "main.py", parameters: "", options: "" },
+      },
+      {
+        command: "/opt/py 3/bin/python",
+        args: ["my script.py", "a b"],
+        params: {
+          interpreter: "'/opt/py 3/bin/python'",
+          mode: "script",
+          script: "my script.py",
+          parameters: "'a b'",
+          options: "",
+        },
+      },
+    ];
+    for (const { command, args, params } of cases) {
+      const c = cfg("py", { kind: "python", command, args, detected: true });
+      expect(python.paramsFrom!(c)).toEqual(params);
+      expect(formParams(c)).toEqual(params);
+      expect(python.commandLine(params)).toEqual({ command, args });
+      expect(withParams(c, params)).toMatchObject({ command, args });
+    }
+    // Code, stdin and the REPL run no script or module: they stay a command line.
+    for (const args of [["-c", "print(1)"], ["-"], [], ["-u"]]) {
+      expect(formParams(cfg("py", { kind: "python", command: "python3", args }))).toBeNull();
+    }
+
+    // Running a file (editor, Project view, gutter) opens in the Python form.
+    expect(formParams(contextConfig("scripts/tool.py", [])!)).toEqual({
+      interpreter: "python3",
+      mode: "script",
+      script: "scripts/tool.py",
+      parameters: "",
+      options: "",
+    });
+    // No interpreter: `python3`, which the backend points at the project interpreter.
+    expect(python.commandLine({ mode: "module", module: "app" })).toEqual({ command: "python3", args: ["-m", "app"] });
+    const interpreter = python.fields.find((f) => f.key === "interpreter")!;
+    const uv = cfg("uv", { kind: "python", command: "uv", args: ["run", "python", "-m", "app"] });
+    expect(interpreter.suggestions!([uv, cfg("sh")], {})).toEqual(["uv run python"]);
+    expect(missingParams(withParams(fresh, { mode: "module", module: "1app" }))).toEqual({
+      module: "Not a module name",
+    });
+  });
+
+  it("a new Python configuration takes a script, parameters and environment variables", async () => {
+    useRun.setState({ configs: [], loaded: true, editorOpen: true });
+    render(<EditConfigsOverlay />);
+    fireEvent.click(screen.getByRole("button", { name: "Add New Configuration" }));
+    fireEvent.click(await screen.findByText("Python"));
+    expect((screen.getByLabelText("Python interpreter") as HTMLInputElement).placeholder).toBe("Project interpreter");
+    fireEvent.change(screen.getByLabelText("Script path"), { target: { value: "main.py" } });
+    fireEvent.change(screen.getByLabelText("Script parameters"), { target: { value: "--name 'a b'" } });
+    fireEvent.change(screen.getByLabelText("Environment variables"), { target: { value: "GREETING=hi" } });
+    const line = () => (screen.getByLabelText("Command line") as HTMLInputElement).value;
+    expect(line()).toBe("python3 main.py --name 'a b'");
+    expect((screen.getByLabelText("Environment variables") as HTMLInputElement).value).toBe("GREETING=hi");
+    fireEvent.click(screen.getByRole("button", { name: "Execute" }));
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: "Module name" }));
+    expect(screen.queryByLabelText("Script path")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Module name"), { target: { value: "app.cli" } });
+    expect(line()).toBe("python3 -m app.cli --name 'a b'");
+  });
+
+  it("takes the whole command line typed at once; the type's form follows when it can express it", async () => {
+    useRun.setState({ configs: [], loaded: true, editorOpen: true });
+    render(<EditConfigsOverlay />);
+    fireEvent.click(screen.getByRole("button", { name: "Add New Configuration" }));
+    fireEvent.click(await screen.findByText("Python"));
+    const line = screen.getByLabelText("Command line") as HTMLInputElement;
+    const value = (label: string) => (screen.getByLabelText(label) as HTMLInputElement).value;
+    fireEvent.change(line, { target: { value: ".venv/bin/python -X dev tools/seed.py --rows 10" } });
+    expect(value("Python interpreter")).toBe(".venv/bin/python");
+    expect(value("Script path")).toBe("tools/seed.py");
+    expect(value("Script parameters")).toBe("--rows 10");
+    expect(value("Interpreter options")).toBe("-X dev");
+    expect(line.value).toBe(".venv/bin/python -X dev tools/seed.py --rows 10");
+    // Not a Python command line: it is edited as a plain command.
+    fireEvent.change(line, { target: { value: "uvicorn app:app --reload" } });
+    expect(screen.getByText("This command line doesn't fit the type's form; it is edited as a command.")).toBeTruthy();
+    expect(value("Command")).toBe("uvicorn");
+    expect(value("Arguments")).toBe("app:app --reload");
+    fireEvent.blur(line);
+    expect(line.value).toBe("uvicorn app:app --reload");
+  });
+
   it("shell script files and text derive the command line", () => {
     const c = cfg("s");
     expect(
@@ -475,7 +602,7 @@ describe("Run/Debug Configurations tree", () => {
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Unnamed");
     fireEvent.change(screen.getByLabelText("Executable"), { target: { value: "./server" } });
     fireEvent.change(screen.getByLabelText("Program arguments"), { target: { value: "--port 1" } });
-    expect(screen.getByText("./server --port 1")).toBeTruthy();
+    expect((screen.getByLabelText("Command line") as HTMLInputElement).value).toBe("./server --port 1");
     // Modify options adds "Redirect input".
     fireEvent.click(screen.getByRole("button", { name: /Modify options/ }));
     fireEvent.click(await screen.findByText("Redirect input"));

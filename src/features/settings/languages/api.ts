@@ -5,21 +5,31 @@
 import { Channel } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { call, commands, isTauri, nextRequestId, type PythonPackage, type Sdk, type SdkKind } from "@/platform/ipc";
+import { projectMachineKey } from "@/platform/remote";
 
 export type { PythonPackage, Sdk, SdkKind };
 
 interface SdkCache {
+  /** The project and the machine (the remote host in a remote window) the lists are for. */
+  key: string;
   byKind: Partial<Record<SdkKind, Sdk[]>>;
   loading: Partial<Record<SdkKind, boolean>>;
   errors: Partial<Record<SdkKind, string>>;
 }
 
-export const useSdks = create<SdkCache>(() => ({ byKind: {}, loading: {}, errors: {} }));
+export const useSdks = create<SdkCache>(() => ({ key: "", byKind: {}, loading: {}, errors: {} }));
 
 const inflight = new Map<SdkKind, Promise<Sdk[]>>();
 
-/** Detected SDKs of `kind`; cached unless `force`. */
+/** Detected SDKs of `kind` on the open project's machine; cached unless `force`. */
 export function detectSdks(kind: SdkKind, force = false): Promise<Sdk[]> {
+  const key = projectMachineKey();
+  if (useSdks.getState().key !== key) {
+    // Another project, or the window connected to (or left) a remote host: not these SDKs.
+    inflight.clear();
+    useSdks.setState({ key, byKind: {}, loading: {}, errors: {} });
+  }
+  const current = () => useSdks.getState().key === key;
   const cached = useSdks.getState().byKind[kind];
   if (cached && !force) return Promise.resolve(cached);
   const running = inflight.get(kind);
@@ -29,21 +39,22 @@ export function detectSdks(kind: SdkKind, force = false): Promise<Sdk[]> {
     return Promise.resolve([]);
   }
   useSdks.setState((s) => ({ loading: { ...s.loading, [kind]: true } }));
-  const p = call(commands.sdkDetect(kind))
+  const p: Promise<Sdk[]> = call(commands.sdkDetect(kind))
     .then((list) => {
-      useSdks.setState((s) => ({
-        byKind: { ...s.byKind, [kind]: list },
-        errors: { ...s.errors, [kind]: undefined },
-      }));
+      if (current())
+        useSdks.setState((s) => ({
+          byKind: { ...s.byKind, [kind]: list },
+          errors: { ...s.errors, [kind]: undefined },
+        }));
       return list;
     })
     .catch((e: unknown) => {
-      useSdks.setState((s) => ({ errors: { ...s.errors, [kind]: String((e as Error)?.message ?? e) } }));
+      if (current()) useSdks.setState((s) => ({ errors: { ...s.errors, [kind]: String((e as Error)?.message ?? e) } }));
       return [] as Sdk[];
     })
     .finally(() => {
-      inflight.delete(kind);
-      useSdks.setState((s) => ({ loading: { ...s.loading, [kind]: false } }));
+      if (inflight.get(kind) === p) inflight.delete(kind);
+      if (current()) useSdks.setState((s) => ({ loading: { ...s.loading, [kind]: false } }));
     });
   inflight.set(kind, p);
   return p;

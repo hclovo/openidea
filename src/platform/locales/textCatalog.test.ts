@@ -153,6 +153,7 @@ const UNTRANSLATED = new Set<string>([
   "PostgreSQL",
   "Pyright",
   "pytest",
+  "Python",
   "Rust",
   "Rustfmt",
   "SingleStore",
@@ -223,6 +224,8 @@ const UNTRANSLATED = new Set<string>([
   "run pytest",
   "snake_case",
   "tests",
+  "main.py",
+  "package.module",
   '{ "section": { "key": "value" } }',
   // Identifiers that only look like text: icon names, error codes, categories, console output
   "app",

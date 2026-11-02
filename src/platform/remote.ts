@@ -130,6 +130,11 @@ export function isRemoteWindow(): boolean {
   return useRemote.getState().session !== null;
 }
 
+/** The open project and the machine it is on, keying what is detected there (interpreters, SDKs). */
+export function projectMachineKey(): string {
+  return `${useRemote.getState().session?.sshConfig ?? ""}|${useProject.getState().project?.root ?? ""}`;
+}
+
 /** Re-attaches after a reload (the backend keeps the connection per window). */
 export async function restoreRemote(): Promise<RemoteSession | null> {
   if (!isTauri()) return null;
