@@ -164,6 +164,9 @@
   font-size: var(--fs-small);
 }
 .toastBody {
+  /* A long body (a language server's stack trace) scrolls inside; the title and Dismiss stay in view. */
+  max-height: 240px;
+  overflow-y: auto;
   color: var(--fg-secondary);
   overflow-wrap: anywhere;
   -webkit-user-select: text;

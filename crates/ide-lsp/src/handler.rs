@@ -147,11 +147,15 @@ impl ClientHandler {
                 return;
             }
         };
-        if !mgr.first_message(&self.server.name, &text) {
-            tracing::debug!("[{}] repeated: {text}", self.server.name);
+        let shown = without_stack_trace(&text);
+        if shown.len() < text.len() {
+            tracing::warn!("[{}] {text}", self.server.name);
+        }
+        if !mgr.first_message(&self.server.name, &shown) {
+            tracing::debug!("[{}] repeated: {shown}", self.server.name);
             return;
         }
-        mgr.sink().emit(IdeEvent::Notify { level, title: self.server.name.clone(), body: Some(text) });
+        mgr.sink().emit(IdeEvent::Notify { level, title: self.server.name.clone(), body: Some(shown) });
     }
 
     fn configuration(&self, params: &Value) -> Value {
@@ -328,5 +332,30 @@ fn merge(base: &mut Value, layer: Value) {
             }
         }
         (base, layer) => *base = layer,
+    }
+}
+
+/// A server's message without the stack trace it may carry (a crash inside a Node.js
+/// server such as basedpyright: `    at f (…/pyright-langserver.js:1:2)` lines). The
+/// notification keeps the error; the log has all of it.
+fn without_stack_trace(text: &str) -> String {
+    let lines: Vec<&str> =
+        text.lines().filter(|l| !l.trim_start().starts_with("at ") || !l.starts_with(char::is_whitespace)).collect();
+    if lines.len() == text.lines().count() { text.to_owned() } else { lines.join("\n").trim_end().to_owned() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_stack_trace;
+
+    #[test]
+    fn messages_drop_their_stack_trace() {
+        let crash = "Error performing analysis: TypeError: Cannot read properties of undefined (reading 'isStubFile')\n    at getTypeOfFunction (/x/pyright-langserver.js:82713:28)\n    at /x/pyright-langserver.js:91195:27";
+        assert_eq!(
+            without_stack_trace(crash),
+            "Error performing analysis: TypeError: Cannot read properties of undefined (reading 'isStubFile')"
+        );
+        let plain = "Import \"x\" could not be resolved\nat the top of the file";
+        assert_eq!(without_stack_trace(plain), plain);
     }
 }
